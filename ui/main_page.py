@@ -68,7 +68,12 @@ def _run_file_paths() -> list[Path | None]:
 def _reset_run(settings: Settings) -> None:
     remove_files(_run_file_paths(), settings.temp_dir)
     developer_mode_enabled = st.session_state.get("developer_mode_enabled", False)
-    for key in list(DEFAULT_SESSION_VALUES) + ["upload_slip", "camera_slip", "run_session_id"]:
+    for key in list(DEFAULT_SESSION_VALUES) + [
+        "photo_input_method",
+        "upload_slip",
+        "camera_slip",
+        "run_session_id",
+    ]:
         st.session_state.pop(key, None)
     _initialize_session()
     st.session_state.developer_mode_enabled = developer_mode_enabled
@@ -132,20 +137,33 @@ def _accept_selected_image(selected_file: object, settings: Settings) -> None:
 
 
 def _render_upload_area(settings: Settings) -> bool:
-    st.markdown('<div class="section-label">Choose your slip photo</div>', unsafe_allow_html=True)
-    upload_tab, camera_tab = st.tabs(["Upload a photo", "Take a photo"])
-    with upload_tab:
-        uploaded_file = st.file_uploader(
-            "Upload a JPG or PNG photo",
-            type=["jpg", "jpeg", "png"],
-            label_visibility="collapsed",
-            key="upload_slip",
-        )
-    with camera_tab:
+    st.subheader("1. Add your slip photo")
+    st.caption("Keep the full slip in view and make sure the writing is clear.")
+
+    input_method = st.segmented_control(
+        "How would you like to add it?",
+        options=["Upload photo", "Use camera"],
+        default="Upload photo",
+        required=True,
+        key="photo_input_method",
+        width="stretch",
+    )
+
+    uploaded_file = None
+    camera_file = None
+    if input_method == "Use camera":
+        st.caption("Your camera starts only after you choose this option.")
         camera_file = st.camera_input(
-            "Take a clear photo",
-            label_visibility="collapsed",
+            "Take a clear photo of your slip",
             key="camera_slip",
+            resolution="1080p",
+            width="stretch",
+        )
+    else:
+        uploaded_file = st.file_uploader(
+            "Choose a photo from your phone or computer",
+            type=["jpg", "jpeg", "png"],
+            key="upload_slip",
         )
 
     selected_file = camera_file or uploaded_file
@@ -163,9 +181,10 @@ def _render_upload_area(settings: Settings) -> bool:
     if st.session_state.uploaded_image:
         render_image_preview(st.session_state.uploaded_image)
         return st.button(
-            "Get Report",
+            "Get report",
             type="primary",
-            use_container_width=True,
+            icon=":material/search:",
+            width="stretch",
             disabled=False,
         )
     return False
@@ -218,7 +237,7 @@ def _render_developer_details(settings: Settings) -> None:
 
 def render_app(settings: Settings) -> None:
     st.set_page_config(page_title="Get My Lab Report", layout="centered")
-    st.markdown(APP_CSS, unsafe_allow_html=True)
+    st.html(APP_CSS)
     _initialize_session()
     render_header()
 
@@ -233,14 +252,18 @@ def render_app(settings: Settings) -> None:
         with main_area.container():
             render_result(Path(st.session_state.resulting_file_path))
             st.write("")
-            if st.button("Scan Another Slip", use_container_width=True):
+            if st.button(
+                "Scan another slip", icon=":material/restart_alt:", width="stretch"
+            ):
                 _reset_run(settings)
     elif state == WorkflowState.FAILED:
         with main_area.container():
             render_error(st.session_state.error_state)
             render_progress(state, failed=True)
             st.write("")
-            if st.button("Try Again", type="primary", use_container_width=True):
+            if st.button(
+                "Try again", type="primary", icon=":material/refresh:", width="stretch"
+            ):
                 _reset_run(settings)
     else:
         with main_area.container():

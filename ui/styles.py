@@ -1,12 +1,12 @@
-"""Small, maintainable visual layer for the Streamlit interface."""
+"""Mobile-first visual layer for the Streamlit interface."""
 
 APP_CSS = r"""
 <style>
 :root {
-    --ink: #164e63;
+    --ink: #123f4d;
+    --body-ink: #365963;
     --muted-ink: #526a73;
     --primary: #087f9b;
-    --primary-dark: #08657a;
     --success: #087a55;
     --surface: #ffffff;
     --soft: #ecfeff;
@@ -14,189 +14,216 @@ APP_CSS = r"""
     --danger: #b42318;
 }
 
-html, body, [class*="st-"] {
+html {
+    font-size: 16px;
+    overscroll-behavior-y: contain;
+}
+
+html, body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", sans-serif;
 }
 
 .stApp {
     background:
-        radial-gradient(circle at 50% -10%, rgba(34, 211, 238, 0.13), transparent 31rem),
+        radial-gradient(circle at 50% -8rem, rgba(34, 211, 238, 0.14), transparent 28rem),
         #f8fcfd;
-    color: var(--ink);
+    color: var(--body-ink);
+    overflow-x: hidden;
 }
 
 [data-testid="stHeader"], footer, #MainMenu {
-    visibility: hidden;
+    display: none;
 }
 
 .block-container {
-    max-width: 720px;
-    padding-top: 3.5rem;
-    padding-bottom: 3rem;
+    max-width: 680px;
+    padding: max(1.25rem, env(safe-area-inset-top)) 1rem
+        max(2.25rem, env(safe-area-inset-bottom));
 }
 
-.app-kicker {
-    width: fit-content;
-    margin: 0 auto 1.15rem;
-    padding: .42rem .72rem;
-    border-radius: 999px;
-    background: #dff8fa;
-    color: #09657a;
-    font-size: .78rem;
-    font-weight: 700;
-    letter-spacing: .07em;
-    text-transform: uppercase;
+h1 {
+    color: var(--ink);
+    font-size: clamp(2rem, 10.5vw, 3.35rem) !important;
+    font-weight: 750 !important;
+    letter-spacing: -.045em !important;
+    line-height: 1.08 !important;
+    margin: .15rem 0 .25rem !important;
 }
 
-.app-title {
-    color: #123f4d;
-    font-size: clamp(2.15rem, 7vw, 3.45rem);
-    font-weight: 750;
-    letter-spacing: -.045em;
-    line-height: 1.04;
-    margin: 0;
-    text-align: center;
+h2, h3 {
+    color: var(--ink);
+    letter-spacing: -.02em;
+    line-height: 1.25;
 }
 
-.app-subtitle {
-    color: var(--muted-ink);
-    font-size: clamp(1rem, 3.6vw, 1.16rem);
+h2 {
+    font-size: clamp(1.25rem, 5vw, 1.55rem) !important;
+    margin-top: 1.5rem !important;
+}
+
+p, label, [data-testid="stCaptionContainer"] {
     line-height: 1.6;
-    margin: 1rem auto 2.25rem;
-    max-width: 34rem;
-    text-align: center;
 }
 
-.section-label {
-    color: #244f5c;
-    font-size: 1rem;
-    font-weight: 700;
-    margin: .25rem 0 .65rem;
+[data-testid="stCaptionContainer"] {
+    color: var(--muted-ink);
+    font-size: .9rem;
 }
 
-[data-testid="stFileUploader"] {
-    background: rgba(255,255,255,.86);
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    padding: .4rem .8rem .8rem;
+[data-testid="stBadge"] {
+    margin-bottom: .2rem;
 }
 
-[data-testid="stFileUploaderDropzone"] {
-    min-height: 8rem;
-    background: #f5fdfe;
-    border-color: #8fd5de;
-    border-radius: 14px;
+[data-testid="stSegmentedControl"] {
+    margin: .35rem 0 .65rem;
+    width: 100%;
 }
 
-[data-testid="stCameraInput"] > div {
-    border-radius: 16px;
+[data-testid="stSegmentedControl"] > div {
+    width: 100%;
 }
 
-.stButton > button, .stDownloadButton > button {
-    cursor: pointer;
-    min-height: 3.25rem;
-    border-radius: 12px;
-    font-size: 1rem;
-    font-weight: 700;
-    transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+[data-testid="stSegmentedControl"] button {
+    min-height: 3rem;
     touch-action: manipulation;
 }
 
-.stButton > button:hover, .stDownloadButton > button:hover {
-    transform: translateY(-1px);
+[data-testid="stFileUploader"] {
+    background: rgba(255, 255, 255, .9);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    margin-top: .5rem;
+    padding: .35rem .7rem .7rem;
 }
 
-.stButton > button:focus-visible, .stDownloadButton > button:focus-visible {
-    outline: 3px solid rgba(8, 145, 178, .34);
+[data-testid="stFileUploaderDropzone"] {
+    background: #f5fdfe;
+    border-color: #78c9d4;
+    border-radius: 12px;
+    min-height: 7.25rem;
+}
+
+[data-testid="stCameraInput"] {
+    margin-top: .5rem;
+}
+
+[data-testid="stCameraInput"] video,
+[data-testid="stCameraInput"] img {
+    border-radius: 14px;
+    max-height: 58vh;
+    object-fit: contain;
+}
+
+.stButton > button,
+.stDownloadButton > button {
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: 700;
+    min-height: 3.25rem;
+    border-radius: 12px;
+    touch-action: manipulation;
+    transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.stButton > button:hover,
+.stDownloadButton > button:hover {
+    box-shadow: 0 7px 20px rgba(22, 78, 99, .12);
+}
+
+.stButton > button:focus-visible,
+.stDownloadButton > button:focus-visible {
+    outline: 3px solid rgba(8, 145, 178, .36);
     outline-offset: 2px;
 }
 
 [data-testid="stImage"] {
-    margin: .75rem 0 .7rem;
-    padding: .8rem;
-    border: 1px solid var(--border);
-    border-radius: 18px;
     background: var(--surface);
-    box-shadow: 0 12px 36px rgba(22, 78, 99, .08);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 12px 34px rgba(22, 78, 99, .08);
+    margin: .5rem 0 .25rem;
+    padding: .55rem;
 }
 
 [data-testid="stImage"] img {
-    border-radius: 12px;
-    max-height: 34rem;
+    border-radius: 11px;
+    max-height: 56vh;
     object-fit: contain;
 }
 
-.privacy-note {
-    color: var(--muted-ink);
-    font-size: .83rem;
-    line-height: 1.5;
-    margin: .65rem 0 1rem;
-    text-align: center;
-}
-
-.progress-shell, .result-shell {
-    background: rgba(255,255,255,.94);
+.progress-shell,
+.result-shell {
+    background: rgba(255, 255, 255, .96);
     border: 1px solid var(--border);
-    border-radius: 22px;
-    box-shadow: 0 18px 48px rgba(22, 78, 99, .09);
-    padding: clamp(1.35rem, 5vw, 2rem);
+    border-radius: 18px;
+    box-shadow: 0 16px 40px rgba(22, 78, 99, .09);
+    padding: 1.2rem;
 }
 
-.progress-title, .result-title {
-    color: #123f4d;
-    font-size: clamp(1.45rem, 5vw, 1.9rem);
+.progress-title,
+.result-title {
+    color: var(--ink);
+    font-size: clamp(1.45rem, 6vw, 1.9rem);
     font-weight: 750;
-    letter-spacing: -.02em;
+    letter-spacing: -.025em;
+    line-height: 1.2;
     margin: 0 0 .45rem;
 }
 
-.progress-intro, .result-copy {
+.progress-intro,
+.result-copy {
     color: var(--muted-ink);
-    line-height: 1.55;
-    margin: 0 0 1.35rem;
+    line-height: 1.6;
+    margin: 0 0 1.2rem;
 }
 
-.progress-list { display: grid; gap: .55rem; }
+.progress-list {
+    display: grid;
+    gap: .5rem;
+}
+
 .progress-row {
     align-items: center;
     border-radius: 12px;
-    color: #718187;
+    color: #667b82;
     display: grid;
+    font-size: .97rem;
     font-weight: 600;
-    gap: .75rem;
-    grid-template-columns: 1.7rem 1fr;
+    gap: .7rem;
+    grid-template-columns: 1.65rem minmax(0, 1fr);
     min-height: 3rem;
-    padding: .45rem .6rem;
+    padding: .45rem .55rem;
 }
+
 .progress-row.current { background: var(--soft); color: #0b6579; }
 .progress-row.done { color: var(--success); }
 .progress-row.error { background: #fff1f0; color: var(--danger); }
+
 .progress-marker {
     align-items: center;
-    border: 2px solid #bdd0d5;
+    border: 2px solid #aebfc4;
     border-radius: 50%;
     display: flex;
     font-size: .78rem;
-    height: 1.45rem;
+    height: 1.4rem;
     justify-content: center;
-    width: 1.45rem;
+    width: 1.4rem;
 }
-.done .progress-marker { background: var(--success); border-color: var(--success); color: white; }
+
+.done .progress-marker {
+    background: var(--success);
+    border-color: var(--success);
+    color: white;
+}
+
 .current .progress-marker { border-color: var(--primary); color: var(--primary); }
 .error .progress-marker { border-color: var(--danger); color: var(--danger); }
 
-.demo-badge {
-    background: #fff7e6;
-    border: 1px solid #f0d39a;
-    border-radius: 10px;
-    color: #76561c;
-    font-size: .86rem;
-    line-height: 1.45;
-    margin: .85rem 0 1.25rem;
-    padding: .75rem .85rem;
+.result-shell {
+    border-top: 5px solid var(--success);
+    margin-bottom: .75rem;
 }
 
-.result-shell { border-top: 5px solid var(--success); }
 .result-eyebrow {
     color: var(--success);
     font-size: .78rem;
@@ -206,17 +233,56 @@ html, body, [class*="st-"] {
     text-transform: uppercase;
 }
 
+.demo-badge {
+    background: #fff7e6;
+    border: 1px solid #e3c47e;
+    border-radius: 10px;
+    color: #684b16;
+    font-size: .9rem;
+    line-height: 1.55;
+    margin-top: .8rem;
+    padding: .75rem .85rem;
+}
+
 .footer-note {
-    color: #73868c;
-    font-size: .78rem;
-    margin-top: 2.2rem;
+    color: #657c83;
+    font-size: .82rem;
+    line-height: 1.5;
+    margin: 2rem auto 0;
+    max-width: 28rem;
     text-align: center;
 }
 
-@media (max-width: 640px) {
-    .block-container { padding: 2rem 1rem 2.5rem; }
-    .app-subtitle { margin-bottom: 1.65rem; }
-    .progress-shell, .result-shell { border-radius: 18px; padding: 1.2rem; }
+@media (min-width: 641px) {
+    .block-container {
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+        padding-top: 3rem;
+    }
+
+    .progress-shell,
+    .result-shell {
+        border-radius: 22px;
+        padding: 2rem;
+    }
+}
+
+@media (max-width: 380px) {
+    .block-container {
+        padding-left: .8rem;
+        padding-right: .8rem;
+    }
+
+    [data-testid="stSegmentedControl"] button {
+        font-size: .9rem;
+        padding-left: .45rem;
+        padding-right: .45rem;
+    }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+    .block-container { padding-top: .8rem; }
+    [data-testid="stCameraInput"] video { max-height: 66vh; }
 }
 
 @media (prefers-reduced-motion: reduce) {

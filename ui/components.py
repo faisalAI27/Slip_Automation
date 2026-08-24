@@ -10,25 +10,19 @@ from workflow.state import PROGRESS_STEPS, WorkflowState, step_index
 
 
 def render_header() -> None:
-    st.markdown(
-        """
-        <div class="app-kicker">Simple &amp; secure</div>
-        <h1 class="app-title">Get My Lab Report</h1>
-        <p class="app-subtitle">
-            Upload or take a clear photo of your hospital or laboratory slip.
-        </p>
-        """,
-        unsafe_allow_html=True,
-    )
+    with st.container(horizontal_alignment="center", gap="small"):
+        st.badge("Simple and secure", icon=":material/verified_user:", color="blue")
+        st.title("Get My Lab Report", text_alignment="center")
+        st.markdown(
+            "Upload or take a clear photo of your hospital or laboratory slip.",
+            text_alignment="center",
+        )
 
 
 def render_image_preview(image_data: bytes) -> None:
-    st.markdown('<div class="section-label">Your slip photo</div>', unsafe_allow_html=True)
-    st.image(image_data, caption="Preview of your slip photo", use_container_width=True)
-    st.markdown(
-        '<p class="privacy-note">Your photo is kept temporarily and removed when you start over.</p>',
-        unsafe_allow_html=True,
-    )
+    st.subheader("2. Check your photo")
+    st.image(image_data, caption="Preview of your slip photo", width="stretch")
+    st.caption("Your photo is kept temporarily and removed when you start over.")
 
 
 def render_progress(current_state: WorkflowState, failed: bool = False) -> None:
@@ -49,7 +43,7 @@ def render_progress(current_state: WorkflowState, failed: bool = False) -> None:
             f"<span>{escape(label)}</span></div>"
         )
 
-    st.markdown(
+    st.html(
         """
         <section class="progress-shell" aria-live="polite">
           <h2 class="progress-title">Getting things ready</h2>
@@ -58,12 +52,11 @@ def render_progress(current_state: WorkflowState, failed: bool = False) -> None:
         """
         + "".join(rows)
         + "</div></section>",
-        unsafe_allow_html=True,
     )
 
 
 def render_result(file_path: Path) -> None:
-    st.markdown(
+    st.html(
         """
         <section class="result-shell">
           <div class="result-eyebrow">Ready</div>
@@ -72,24 +65,21 @@ def render_result(file_path: Path) -> None:
           <div class="demo-badge"><strong>Demo only:</strong> This is a sample file for testing the interface. No real report was retrieved.</div>
         </section>
         """,
-        unsafe_allow_html=True,
     )
 
-    left, right = st.columns(2, gap="small")
-    with left:
-        if st.button("View Report", use_container_width=True):
-            st.session_state.show_report_preview = not st.session_state.get(
-                "show_report_preview", False
-            )
-    with right:
-        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
-        st.download_button(
-            "Download Report",
-            data=file_path.read_bytes(),
-            file_name="demo-lab-report.txt",
-            mime=mime_type,
-            type="primary",
-            use_container_width=True,
+    mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    st.download_button(
+        "Download report",
+        data=file_path.read_bytes(),
+        file_name="demo-lab-report.txt",
+        mime=mime_type,
+        type="primary",
+        icon=":material/download:",
+        width="stretch",
+    )
+    if st.button("View report", icon=":material/visibility:", width="stretch"):
+        st.session_state.show_report_preview = not st.session_state.get(
+            "show_report_preview", False
         )
 
     if st.session_state.get("show_report_preview", False):
@@ -102,11 +92,10 @@ def render_result(file_path: Path) -> None:
 
 
 def render_error(message: str) -> None:
-    st.error(message, icon=None)
+    st.error(message, icon=":material/error:")
 
 
 def render_footer() -> None:
-    st.markdown(
+    st.html(
         '<p class="footer-note">Step 1 demo · No medical processing is performed</p>',
-        unsafe_allow_html=True,
     )

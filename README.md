@@ -22,6 +22,15 @@ streamlit run app.py
 
 Streamlit prints a local address, normally `http://localhost:8501`. Open it in a desktop or mobile browser on the same development machine.
 
+### Open it on a phone
+
+1. Connect the Mac and phone to the same Wi-Fi network.
+2. Start the app with `streamlit run app.py`.
+3. Open the **Network URL** printed by Streamlit on the phone, such as `http://192.168.1.20:8501`.
+4. If macOS asks whether Python may accept incoming connections, choose **Allow**.
+
+The camera is never initialized on page load. It starts only after the user explicitly chooses **Use camera**. For real medical documents, use a trusted private network; the current app is a local interface demo and does not provide production deployment security.
+
 Developer details are available in a collapsed section when `DEBUG_MODE=true`. Set it to `false` for the cleanest normal-user interface.
 
 ## Project structure
