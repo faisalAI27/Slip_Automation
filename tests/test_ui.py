@@ -3,7 +3,9 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+from tests.test_result_view import RESULT_PAYLOAD
 from ui.styles import APP_CSS
+from workflow.state import WorkflowState
 
 
 class UserInterfaceTests(unittest.TestCase):
@@ -23,6 +25,22 @@ class UserInterfaceTests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual(len(app.get("file_uploader")), 0)
         self.assertEqual(len(app.get("camera_input")), 1)
+
+    def test_phase_three_runs_automatically_after_document_understanding(self) -> None:
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        app = AppTest.from_file(app_path)
+        app.session_state["workflow_state"] = WorkflowState.DOCUMENT_UNDERSTOOD
+        app.session_state["document_understanding_result"] = RESULT_PAYLOAD
+
+        app.run(timeout=15)
+
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state["workflow_state"], WorkflowState.PLAN_READY)
+        self.assertEqual(app.session_state["workflow_plan"]["status"], "ready")
+        self.assertIn(
+            "Your slip is ready for online retrieval.",
+            [item.value for item in app.success],
+        )
 
 
 if __name__ == "__main__":

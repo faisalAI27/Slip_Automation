@@ -1,10 +1,10 @@
-# Get My Lab Report — Phase 2
+# Get My Lab Report — Phase 3
 
-This Streamlit app accepts a hospital or laboratory slip image and turns it into a validated semantic representation. Local development uses Ollama, so no API key or API subscription is required. A replaceable provider layer keeps paid deployment options available later.
+This Streamlit app accepts a hospital or laboratory slip image, turns it into a validated semantic representation, and builds one deterministic next-step plan. Local development uses Ollama, so no API key or API subscription is required. A replaceable provider layer keeps paid deployment options available later.
 
-> **Current status:** Phase 2 performs real document understanding. It classifies the document, identifies the issuing organization, infers its purpose and likely action, extracts URLs, QR content, meaningful fields, contextual dates, instructions, confidence levels, and warnings. It stops at `DOCUMENT_UNDERSTOOD`.
+> **Current status:** Phase 2 performs real document understanding. Phase 3 then selects exactly one safe next action using a fixed priority: printed report URL, relevant QR URL, organization homepage, organization-only web search, or user input/stop. It stops at `PLAN_READY` or `USER_INPUT_REQUIRED`.
 
-Browser automation, portal discovery, website visits, report retrieval, and downloads are deliberately not implemented yet.
+Browser automation, website visits, report retrieval, form submission, and downloads are deliberately not implemented yet. A planned `OPEN_URL` or `SEARCH_WEB` action is data for a later phase; Phase 3 does not execute it.
 
 ## Run locally on macOS
 
@@ -21,7 +21,7 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Start Ollama and download the local vision model once. The model download is approximately 3.3 GB:
+Start Ollama and download the local vision model once. Check the size reported by Ollama before downloading because model artifacts can change:
 
 ```bash
 open -a Ollama
@@ -78,14 +78,15 @@ DOCUMENT_AI_MODEL=gpt-5.6-terra
 DOCUMENT_AI_API_KEY=your_api_key_here
 ```
 
-## Test document understanding
+## Test document understanding and planning
 
 1. Run `open -a Ollama` and confirm `ollama list` contains `qwen3-vl:2b-instruct`.
 2. Optionally set `DEBUG_MODE=true` to inspect structured output locally.
 3. Start the app and upload a clear JPG or PNG containing the whole slip.
 4. Select **Get report**. The first request can be slower while the model loads into memory.
-5. Phase 2 analyzes the temporary image locally and stops at **Slip understood**.
-6. In Developer details, review the document type, organization, URLs, QR codes, semantic fields, dates, instructions, warnings, summary, and optional raw JSON.
+5. Phase 2 analyzes the temporary image locally; Phase 3 immediately creates a plan and stops before any navigation.
+6. The normal view shows the extracted document details and a short planning outcome. It never exposes or executes a clickable planned action.
+7. In Developer details, review the understanding result and Workflow Plan, including candidates, available fields, exactly one next action, warnings, summary, and optional raw JSON.
 
 Useful manual cases:
 
@@ -102,7 +103,7 @@ source .venv/bin/activate
 python -m unittest discover -s tests -v
 ```
 
-The tests use synthetic structured payloads and generated blank images; they do not send medical data to an external service and do not require an API key.
+The tests use synthetic structured payloads and generated blank images; they do not send medical data to an external service and do not require an API key. Planner coverage includes explicit URLs, QR URLs, homepages, privacy-safe searches, missing organization data, unsupported documents, duplicate and unsafe URLs, and sensitive-query rejection.
 
 ## Architecture
 
@@ -127,8 +128,12 @@ The tests use synthetic structured payloads and generated blank images; they do 
 │   ├── developer_view.py            # Structured sensitive debug view
 │   └── styles.py                    # Responsive visual layer
 ├── workflow/
-│   └── state.py                     # Existing state model and Phase 2 progress
-├── browser_agent/                   # Reserved for Phase 3
+│   ├── models.py                    # Strict workflow-plan and next-action models
+│   ├── rules.py                     # Deterministic candidate and priority rules
+│   ├── validation.py                # URL, deduplication, privacy, and plan checks
+│   ├── planner.py                   # Phase 3 orchestration
+│   └── state.py                     # Workflow states through PLAN_READY
+├── browser_agent/                   # Reserved for Phase 4
 ├── downloads/                       # Reserved for a later retrieval phase
 ├── utils/                           # Temporary-file and privacy-safe logging helpers
 └── tests/
@@ -148,4 +153,4 @@ The UI and workflow depend only on `DocumentVisionProvider`, not directly on a v
 - If the optional OpenAI provider is selected later, the image is sent to that provider. Its request uses `store=False`.
 - Local processing is not by itself a complete medical-data security or compliance program. A real deployment still requires organization-specific retention, access-control, encryption, consent, audit, and legal review.
 
-Phase 2 does not visit extracted URLs or execute inferred actions. It only describes the document for a later phase.
+Phase 3 does not visit extracted URLs, search the web, or execute inferred actions. It only produces a validated `WorkflowPlan` for a later phase.

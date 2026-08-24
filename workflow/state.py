@@ -10,6 +10,7 @@ class WorkflowState(str, Enum):
     PROCESSING_DOCUMENT = "processing_document"
     DOCUMENT_UNDERSTOOD = "document_understood"
     DISCOVERING_PORTAL = "discovering_portal"
+    PLAN_READY = "plan_ready"
     NAVIGATING_PORTAL = "navigating_portal"
     RETRIEVING_REPORT = "retrieving_report"
     DOWNLOAD_READY = "download_ready"
@@ -28,12 +29,13 @@ class WorkflowUpdate:
 PROGRESS_STEPS: tuple[tuple[WorkflowState, str], ...] = (
     (WorkflowState.PROCESSING_DOCUMENT, "Reading your slip"),
     (WorkflowState.DOCUMENT_UNDERSTOOD, "Understanding the document"),
+    (WorkflowState.DISCOVERING_PORTAL, "Preparing the next step"),
 )
 
 
 def step_index(state: WorkflowState) -> int:
     states = [step_state for step_state, _ in PROGRESS_STEPS]
-    if state in {WorkflowState.COMPLETED}:
+    if state in {WorkflowState.PLAN_READY, WorkflowState.COMPLETED}:
         return len(states)
     if state in states:
         return states.index(state)

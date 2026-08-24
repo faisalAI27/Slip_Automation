@@ -65,11 +65,34 @@ def render_understanding_outcome(analysis_status: str) -> None:
     st.caption("Scroll down to review the information extracted from your slip.")
 
 
+def render_plan_outcome(planning_status: str) -> None:
+    if planning_status == "unsupported":
+        st.warning(
+            "This document is not suitable for online medical report retrieval.",
+            icon=":material/document_scanner:",
+        )
+        return
+
+    st.success(
+        "Your slip is ready for online retrieval.",
+        icon=":material/check_circle:",
+    )
+    st.caption("Browser automation will be added in the next phase.")
+
+
+def render_user_input_required() -> None:
+    st.warning(
+        "We need clearer organization or portal information before continuing.",
+        icon=":material/help:",
+    )
+    st.caption("Try a clearer, complete photo that includes the organization header.")
+
+
 def render_error(message: str) -> None:
     st.error(message, icon=":material/error:")
 
 
 def render_footer() -> None:
     st.html(
-        '<p class="footer-note">Phase 2.1 · Extraction details enabled</p>',
+        '<p class="footer-note">Phase 3 · Workflow planning only</p>',
     )

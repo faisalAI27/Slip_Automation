@@ -1,4 +1,4 @@
-"""Streamlit entry point for Phase 2 document understanding."""
+"""Streamlit entry point for document understanding and workflow planning."""
 
 from config.settings import get_settings
 from ui.main_page import render_app

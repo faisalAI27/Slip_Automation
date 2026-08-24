@@ -7,7 +7,7 @@ import uuid
 import streamlit as st
 
 from config.settings import Settings
-from document_understanding.models import AnalysisStatus
+from document_understanding.models import AnalysisStatus, DocumentUnderstandingResult
 from document_understanding.provider import (
     ProviderConfigurationError,
     ProviderResponseError,
@@ -22,9 +22,10 @@ from ui.components import (
     render_header,
     render_image_preview,
     render_progress,
-    render_understanding_outcome,
+    render_plan_outcome,
+    render_user_input_required,
 )
-from ui.developer_view import render_document_debug
+from ui.developer_view import render_document_debug, render_workflow_plan_debug
 from ui.result_view import render_extracted_document
 from ui.styles import APP_CSS
 from utils.file_utils import (
@@ -36,6 +37,9 @@ from utils.file_utils import (
 )
 from utils.logger import get_logger
 from workflow.state import WorkflowState
+from workflow.models import PlanningStatus
+from workflow.planner import WorkflowPlanner
+from workflow.validation import PlanningValidationError
 
 
 logger = get_logger(__name__)
@@ -49,8 +53,10 @@ DEFAULT_SESSION_VALUES = {
     "error_state": None,
     "resulting_file_path": None,
     "document_understanding_result": None,
+    "workflow_plan": None,
     "developer_mode_enabled": False,
     "document_processing_stage": None,
+    "planning_stage": None,
     "internal_error": None,
 }
 
@@ -83,6 +89,7 @@ def _reset_run(settings: Settings) -> None:
         "upload_slip",
         "camera_slip",
         "show_raw_document_json",
+        "show_raw_workflow_plan_json",
         "run_session_id",
     ]:
         st.session_state.pop(key, None)
@@ -143,8 +150,10 @@ def _accept_selected_image(selected_file: object, settings: Settings) -> None:
     st.session_state.temporary_image_path = str(stored_path)
     st.session_state.resulting_file_path = None
     st.session_state.document_understanding_result = None
+    st.session_state.workflow_plan = None
     st.session_state.error_state = None
     st.session_state.internal_error = None
+    st.session_state.planning_stage = None
     st.session_state.processing_status = "Photo ready"
     _set_state(WorkflowState.IMAGE_UPLOADED)
 
@@ -287,6 +296,55 @@ def _process_document(settings: Settings, area: object) -> None:
         st.rerun()
 
 
+def _plan_workflow(area: object) -> None:
+    area.empty()
+    progress_area = st.empty()
+    _set_state(WorkflowState.DISCOVERING_PORTAL)
+    st.session_state.processing_status = "Preparing the next step"
+    st.session_state.planning_stage = "workflow_planning:running"
+
+    try:
+        result = DocumentUnderstandingResult.model_validate(
+            st.session_state.document_understanding_result
+        )
+        with progress_area.container():
+            render_progress(WorkflowState.DISCOVERING_PORTAL)
+            with st.spinner(
+                "Preparing a safe retrieval plan. No website will be opened.",
+                show_time=True,
+                width="stretch",
+            ):
+                plan = WorkflowPlanner().plan(result)
+
+        st.session_state.workflow_plan = plan.model_dump(mode="json")
+        st.session_state.planning_stage = "workflow_planning:complete"
+        st.session_state.internal_error = None
+        st.session_state.error_state = None
+        if plan.status == PlanningStatus.USER_INPUT_REQUIRED:
+            st.session_state.processing_status = "More information required"
+            _set_state(WorkflowState.USER_INPUT_REQUIRED)
+        else:
+            st.session_state.processing_status = "Retrieval plan ready"
+            _set_state(WorkflowState.PLAN_READY)
+        st.rerun()
+    except (PlanningValidationError, ValueError, TypeError) as exc:
+        logger.error("Workflow planning failed validation: %s", type(exc).__name__)
+        st.session_state.error_state = "We couldn't prepare the next step. Please try again."
+        st.session_state.internal_error = type(exc).__name__
+        st.session_state.processing_status = "Workflow planning failed"
+        st.session_state.planning_stage = "workflow_planning:validation_error"
+        _set_state(WorkflowState.FAILED)
+        st.rerun()
+    except Exception as exc:  # Never log the plan or sensitive document values.
+        logger.error("Unexpected workflow planning failure: %s", type(exc).__name__)
+        st.session_state.error_state = "We couldn't prepare the next step. Please try again."
+        st.session_state.internal_error = type(exc).__name__
+        st.session_state.processing_status = "Workflow planning failed"
+        st.session_state.planning_stage = "workflow_planning:unexpected_error"
+        _set_state(WorkflowState.FAILED)
+        st.rerun()
+
+
 def _render_developer_details(settings: Settings) -> None:
     if not settings.debug_mode:
         return
@@ -300,6 +358,7 @@ def _render_developer_details(settings: Settings) -> None:
                     "resulting_file_path": st.session_state.resulting_file_path,
                     "processing_status": st.session_state.processing_status,
                     "document_stage": st.session_state.document_processing_stage,
+                    "planning_stage": st.session_state.planning_stage,
                     "error": st.session_state.error_state,
                     "internal_error": st.session_state.internal_error,
                     "run_session_id": st.session_state.run_session_id,
@@ -310,6 +369,8 @@ def _render_developer_details(settings: Settings) -> None:
             )
             if st.session_state.document_understanding_result:
                 render_document_debug(st.session_state.document_understanding_result)
+            if st.session_state.workflow_plan:
+                render_workflow_plan_debug(st.session_state.workflow_plan)
 
 
 def render_app(settings: Settings) -> None:
@@ -326,14 +387,26 @@ def render_app(settings: Settings) -> None:
         if should_process:
             _process_document(settings, main_area)
     elif state == WorkflowState.DOCUMENT_UNDERSTOOD:
+        _plan_workflow(main_area)
+    elif state == WorkflowState.PLAN_READY:
         with main_area.container():
             result_data = st.session_state.document_understanding_result or {}
-            render_understanding_outcome(str(result_data.get("analysis_status", "unknown")))
+            plan_data = st.session_state.workflow_plan or {}
+            render_plan_outcome(str(plan_data.get("status", "failed")))
             render_extracted_document(result_data)
             st.caption(
-                "Online report retrieval will be added in the next phase. "
-                "No detected link has been opened."
+                "Planning is complete. No website, search, or browser action has been executed."
             )
+            if st.button(
+                "Scan another slip", icon=":material/restart_alt:", width="stretch"
+            ):
+                _reset_run(settings)
+    elif state == WorkflowState.USER_INPUT_REQUIRED:
+        with main_area.container():
+            render_user_input_required()
+            result_data = st.session_state.document_understanding_result or {}
+            if result_data:
+                render_extracted_document(result_data)
             if st.button(
                 "Scan another slip", icon=":material/restart_alt:", width="stretch"
             ):
