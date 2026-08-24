@@ -202,6 +202,26 @@ class WorkflowPlannerTests(unittest.TestCase):
         self.assertEqual(plan.status, PlanningStatus.UNSUPPORTED)
         self.assertEqual(plan.required_next_action.type, ActionType.STOP)
 
+    def test_user_provided_bare_domain_becomes_one_safe_open_action(self) -> None:
+        result = _result(_payload())
+
+        plan = self.planner.plan_user_provided_url(
+            result, "reports.example.test/login"
+        )
+
+        self.assertEqual(plan.status, PlanningStatus.READY)
+        self.assertEqual(plan.portal_strategy, PortalStrategy.USER_PROVIDED_URL)
+        self.assertEqual(plan.portal_candidates[0].source, PortalSource.USER_PROVIDED_URL)
+        self.assertEqual(
+            plan.required_next_action.target,
+            "https://reports.example.test/login",
+        )
+        self.assertNotIn("MR-123456", plan.required_next_action.target or "")
+
+    def test_invalid_user_provided_website_is_rejected(self) -> None:
+        with self.assertRaises(PlanningValidationError):
+            self.planner.plan_user_provided_url(_result(_payload()), "not a website")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -80,6 +80,11 @@ def render_plan_outcome(planning_status: str) -> None:
     st.caption("Browser automation will be added in the next phase.")
 
 
+def render_browser_outcome() -> None:
+    st.success("Report service found.", icon=":material/check_circle:")
+    st.caption("The next phase will complete the report retrieval.")
+
+
 def render_user_input_required() -> None:
     st.warning(
         "We need clearer organization or portal information before continuing.",
@@ -94,5 +99,5 @@ def render_error(message: str) -> None:
 
 def render_footer() -> None:
     st.html(
-        '<p class="footer-note">Phase 3 · Workflow planning only</p>',
+        '<p class="footer-note">Phase 4 · Controlled webpage observation</p>',
     )

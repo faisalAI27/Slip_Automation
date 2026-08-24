@@ -44,6 +44,10 @@ def normalize_navigation_url(value: str) -> str | None:
     candidate = value.strip()
     if candidate.lower().startswith("www."):
         candidate = f"https://{candidate}"
+    elif "://" not in candidate:
+        possible_host = candidate.split("/", 1)[0]
+        if "." in possible_host and not any(char.isspace() for char in candidate):
+            candidate = f"https://{candidate}"
     try:
         parsed = urlsplit(candidate)
         port = parsed.port
@@ -81,7 +85,8 @@ def deduplicate_portal_candidates(
         PortalSource.PRINTED_URL: 0,
         PortalSource.QR_CODE: 1,
         PortalSource.ORGANIZATION_HOMEPAGE: 2,
-        PortalSource.FUTURE_WEB_SEARCH: 3,
+        PortalSource.USER_PROVIDED_URL: 3,
+        PortalSource.FUTURE_WEB_SEARCH: 4,
     }
     confidence_priority = {"high": 0, "medium": 1, "low": 2, "unknown": 3}
     output: list[PortalCandidate] = []

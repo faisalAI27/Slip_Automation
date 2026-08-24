@@ -2,11 +2,13 @@
 
 import streamlit as st
 
+from browser_agent.models import BrowserActionResult
 from document_understanding.models import (
     ConfidenceLevel,
     DocumentUnderstandingResult,
 )
 from utils.logger import get_logger
+from workflow.models import ActionType, WorkflowPlan
 
 
 logger = get_logger(__name__)
@@ -34,6 +36,83 @@ def _confidence_badge(confidence: ConfidenceLevel) -> None:
 
 def _render_exact_value(value: str) -> None:
     st.code(value, language=None, wrap_lines=True)
+
+
+def render_portal_attempt_details(
+    result_data: dict[str, object],
+    plan_data: dict[str, object] | None = None,
+    browser_result_data: dict[str, object] | None = None,
+) -> None:
+    """Show the non-patient portal evidence used by Phases 3 and 4."""
+    result = DocumentUnderstandingResult.model_validate(result_data)
+    plan = WorkflowPlan.model_validate(plan_data) if plan_data else None
+    browser_result = (
+        BrowserActionResult.model_validate(browser_result_data)
+        if browser_result_data
+        else None
+    )
+
+    with st.expander(
+        "URL and browser details",
+        expanded=True,
+        icon=":material/link:",
+    ):
+        st.warning(
+            "Links or QR codes can contain private access information. "
+            "Compare these values with the slip and do not share them publicly.",
+            icon=":material/privacy_tip:",
+        )
+
+        if result.organization and result.organization.name:
+            st.caption("Organization read from the slip")
+            st.write(result.organization.name)
+
+        st.markdown("**URLs read from the slip**")
+        if result.urls:
+            for item in result.urls:
+                st.caption("Printed text detected")
+                _render_exact_value(item.url)
+                if item.normalized_url and item.normalized_url != item.url:
+                    st.caption("Normalized URL used for planning")
+                    _render_exact_value(item.normalized_url)
+                st.caption(
+                    f"{_humanize(item.likely_purpose.value)} · "
+                    f"{_humanize(item.confidence.value)} confidence"
+                )
+        else:
+            st.caption("No usable printed URL was detected.")
+
+        if result.qr_codes:
+            st.markdown("**QR content detected**")
+            for item in result.qr_codes:
+                _render_exact_value(item.value)
+                st.caption(
+                    f"{_humanize(item.type.value)} · "
+                    f"{_humanize(item.confidence.value)} confidence"
+                )
+
+        if plan:
+            st.markdown("**Phase 4 action attempted**")
+            action = plan.required_next_action
+            if action.type == ActionType.OPEN_URL:
+                st.caption("URL selected for safe navigation")
+                _render_exact_value(action.target or "No URL selected")
+            elif action.type == ActionType.SEARCH_WEB:
+                st.caption("Organization-only public search query")
+                _render_exact_value(action.query or "No search query generated")
+                st.caption(
+                    "Search was used because no suitable report URL was available "
+                    "from the document."
+                )
+            else:
+                st.caption("No browser navigation was attempted.")
+
+        if browser_result and not browser_result.success:
+            st.markdown("**Why Phase 4 stopped**")
+            st.write(
+                browser_result.error_message
+                or "The controlled browser stopped without a safe diagnostic."
+            )
 
 
 def render_extracted_document(result_data: dict[str, object]) -> None:

@@ -37,6 +37,7 @@ class PortalSource(str, Enum):
     PRINTED_URL = "printed_url"
     QR_CODE = "qr_code"
     ORGANIZATION_HOMEPAGE = "organization_homepage"
+    USER_PROVIDED_URL = "user_provided_url"
     FUTURE_WEB_SEARCH = "future_web_search"
 
 
@@ -44,6 +45,7 @@ class PortalStrategy(str, Enum):
     EXPLICIT_REPORT_URL = "explicit_report_url"
     QR_REPORT_URL = "qr_report_url"
     ORGANIZATION_HOMEPAGE = "organization_homepage"
+    USER_PROVIDED_URL = "user_provided_url"
     WEB_SEARCH = "web_search"
     USER_INPUT_REQUIRED = "user_input_required"
     UNSUPPORTED = "unsupported"

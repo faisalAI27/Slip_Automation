@@ -31,6 +31,10 @@ class Settings:
     document_ai_timeout_seconds: float
     ollama_base_url: str
     ollama_timeout_seconds: float
+    browser_headless: bool
+    browser_timeout_seconds: float
+    browser_navigation_timeout_seconds: float
+    browser_max_search_results: int
     log_level: str
 
 
@@ -48,7 +52,7 @@ def get_settings() -> Settings:
         max_upload_mb=int(os.getenv("MAX_UPLOAD_MB", "12")),
         document_ai_provider=os.getenv("DOCUMENT_AI_PROVIDER", "ollama").strip(),
         document_ai_model=os.getenv(
-            "DOCUMENT_AI_MODEL", "qwen3-vl:2b-instruct"
+            "DOCUMENT_AI_MODEL", "qwen3-vl:4b-instruct"
         ).strip(),
         document_ai_api_key=document_api_key,
         document_ai_timeout_seconds=float(
@@ -58,5 +62,15 @@ def get_settings() -> Settings:
             "OLLAMA_BASE_URL", "http://127.0.0.1:11434"
         ).strip(),
         ollama_timeout_seconds=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "420")),
+        browser_headless=_as_bool(os.getenv("BROWSER_HEADLESS"), default=True),
+        browser_timeout_seconds=max(
+            1.0, float(os.getenv("BROWSER_TIMEOUT_SECONDS", "30"))
+        ),
+        browser_navigation_timeout_seconds=max(
+            1.0, float(os.getenv("BROWSER_NAVIGATION_TIMEOUT_SECONDS", "45"))
+        ),
+        browser_max_search_results=max(
+            1, min(10, int(os.getenv("BROWSER_MAX_SEARCH_RESULTS", "8")))
+        ),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
     )

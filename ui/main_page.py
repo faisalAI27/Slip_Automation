@@ -6,6 +6,7 @@ import uuid
 
 import streamlit as st
 
+from browser_agent.executor import BrowserExecutor
 from config.settings import Settings
 from document_understanding.models import AnalysisStatus, DocumentUnderstandingResult
 from document_understanding.provider import (
@@ -17,6 +18,7 @@ from document_understanding.provider import (
 )
 from document_understanding.service import DocumentUnderstandingService
 from ui.components import (
+    render_browser_outcome,
     render_error,
     render_footer,
     render_header,
@@ -25,8 +27,12 @@ from ui.components import (
     render_plan_outcome,
     render_user_input_required,
 )
-from ui.developer_view import render_document_debug, render_workflow_plan_debug
-from ui.result_view import render_extracted_document
+from ui.developer_view import (
+    render_browser_execution_debug,
+    render_document_debug,
+    render_workflow_plan_debug,
+)
+from ui.result_view import render_extracted_document, render_portal_attempt_details
 from ui.styles import APP_CSS
 from utils.file_utils import (
     ImageTooLargeError,
@@ -36,9 +42,9 @@ from utils.file_utils import (
     save_uploaded_image,
 )
 from utils.logger import get_logger
-from workflow.state import WorkflowState
-from workflow.models import PlanningStatus
+from workflow.models import ActionType, PlanningStatus, WorkflowPlan
 from workflow.planner import WorkflowPlanner
+from workflow.state import WorkflowState
 from workflow.validation import PlanningValidationError
 
 
@@ -54,10 +60,21 @@ DEFAULT_SESSION_VALUES = {
     "resulting_file_path": None,
     "document_understanding_result": None,
     "workflow_plan": None,
+    "browser_action_result": None,
     "developer_mode_enabled": False,
     "document_processing_stage": None,
     "planning_stage": None,
+    "browser_execution_stage": None,
+    "portal_recovery_error": None,
     "internal_error": None,
+}
+
+RECOVERABLE_BROWSER_ERRORS = {
+    "browser_timeout",
+    "unsafe_navigation",
+    "navigation_error",
+    "search_execution_error",
+    "page_inspection_error",
 }
 
 
@@ -90,6 +107,8 @@ def _reset_run(settings: Settings) -> None:
         "camera_slip",
         "show_raw_document_json",
         "show_raw_workflow_plan_json",
+        "show_raw_browser_observation_json",
+        "manual_portal_url",
         "run_session_id",
     ]:
         st.session_state.pop(key, None)
@@ -151,9 +170,12 @@ def _accept_selected_image(selected_file: object, settings: Settings) -> None:
     st.session_state.resulting_file_path = None
     st.session_state.document_understanding_result = None
     st.session_state.workflow_plan = None
+    st.session_state.browser_action_result = None
     st.session_state.error_state = None
     st.session_state.internal_error = None
     st.session_state.planning_stage = None
+    st.session_state.browser_execution_stage = None
+    st.session_state.portal_recovery_error = None
     st.session_state.processing_status = "Photo ready"
     _set_state(WorkflowState.IMAGE_UPLOADED)
 
@@ -323,9 +345,18 @@ def _plan_workflow(area: object) -> None:
         if plan.status == PlanningStatus.USER_INPUT_REQUIRED:
             st.session_state.processing_status = "More information required"
             _set_state(WorkflowState.USER_INPUT_REQUIRED)
-        else:
+        elif plan.status == PlanningStatus.UNSUPPORTED:
+            st.session_state.processing_status = "Unsupported document"
+            _set_state(WorkflowState.UNSUPPORTED)
+        elif plan.status == PlanningStatus.FAILED:
+            st.session_state.error_state = "We couldn't prepare the next step. Please try again."
+            st.session_state.processing_status = "Workflow planning failed"
+            _set_state(WorkflowState.FAILED)
+        elif plan.status in {PlanningStatus.READY, PlanningStatus.SEARCH_REQUIRED}:
             st.session_state.processing_status = "Retrieval plan ready"
             _set_state(WorkflowState.PLAN_READY)
+        else:
+            raise PlanningValidationError("Unsupported planning outcome.")
         st.rerun()
     except (PlanningValidationError, ValueError, TypeError) as exc:
         logger.error("Workflow planning failed validation: %s", type(exc).__name__)
@@ -345,6 +376,153 @@ def _plan_workflow(area: object) -> None:
         st.rerun()
 
 
+def _browser_error_message(error_type: str | None) -> str:
+    return {
+        "browser_configuration_error": "Browser setup is incomplete.",
+        "browser_launch_error": "The secure browser could not be started.",
+        "browser_timeout": "The report website took too long to respond. Please try again.",
+        "unsafe_navigation": "This website could not be opened safely.",
+        "unsafe_search_query": "The report-service search could not be performed safely.",
+        "navigation_error": "We couldn't open the report service automatically.",
+        "search_execution_error": "We couldn't find the report service automatically.",
+        "page_inspection_error": "The report website could not be understood safely.",
+        "non_actionable_plan": "This document cannot continue to website inspection.",
+    }.get(error_type, "We couldn't inspect the report service. Please try again.")
+
+
+def _suggested_portal_url() -> str:
+    plan_data = st.session_state.workflow_plan
+    if not plan_data:
+        return ""
+    try:
+        plan = WorkflowPlan.model_validate(plan_data)
+    except (ValueError, TypeError):
+        return ""
+    action = plan.required_next_action
+    return action.target or "" if action.type == ActionType.OPEN_URL else ""
+
+
+def _use_manual_portal_url(value: str) -> None:
+    try:
+        result = DocumentUnderstandingResult.model_validate(
+            st.session_state.document_understanding_result
+        )
+        plan = WorkflowPlanner().plan_user_provided_url(result, value)
+    except (PlanningValidationError, ValueError, TypeError):
+        st.session_state.portal_recovery_error = (
+            "Enter a complete public website, for example https://hospital.example."
+        )
+        return
+
+    st.session_state.workflow_plan = plan.model_dump(mode="json")
+    st.session_state.browser_action_result = None
+    st.session_state.error_state = None
+    st.session_state.internal_error = None
+    st.session_state.portal_recovery_error = None
+    st.session_state.planning_stage = "workflow_planning:user_provided_url"
+    st.session_state.browser_execution_stage = None
+    st.session_state.processing_status = "Website ready to check"
+    _set_state(WorkflowState.PLAN_READY)
+    st.rerun()
+
+
+def _render_portal_recovery() -> None:
+    browser_data = st.session_state.browser_action_result
+    if not browser_data:
+        return
+    error_type = browser_data.get("error_type")
+    if error_type not in RECOVERABLE_BROWSER_ERRORS:
+        return
+
+    if "manual_portal_url" not in st.session_state:
+        st.session_state.manual_portal_url = _suggested_portal_url()
+
+    with st.container(border=True, gap="small"):
+        st.subheader("Check a website only if needed")
+        st.caption(
+            "Automatic discovery has already finished. If you know the hospital or "
+            "laboratory website, correct the address below; otherwise scan another slip."
+        )
+        with st.form("manual_portal_recovery", border=False):
+            portal_url = st.text_input(
+                "Hospital or laboratory website",
+                key="manual_portal_url",
+                placeholder="https://hospital.example",
+                help="Use a public HTTP or HTTPS website. Patient details are not required.",
+            )
+            submitted = st.form_submit_button(
+                "Check this website",
+                type="primary",
+                icon=":material/travel_explore:",
+                width="stretch",
+            )
+        if submitted:
+            _use_manual_portal_url(portal_url)
+        if st.session_state.portal_recovery_error:
+            render_error(st.session_state.portal_recovery_error)
+
+
+def _execute_browser(settings: Settings, area: object) -> None:
+    area.empty()
+    progress_area = st.empty()
+    _set_state(WorkflowState.NAVIGATING_PORTAL)
+    st.session_state.browser_execution_stage = "browser_execution:running"
+
+    try:
+        plan = WorkflowPlan.model_validate(st.session_state.workflow_plan)
+        if plan.status not in {PlanningStatus.READY, PlanningStatus.SEARCH_REQUIRED}:
+            raise ValueError("Non-actionable plan reached browser execution.")
+        searching = plan.required_next_action.type == ActionType.SEARCH_WEB
+        st.session_state.processing_status = (
+            "Finding the official report service"
+            if searching
+            else "Opening the report service"
+        )
+        with progress_area.container():
+            render_progress(WorkflowState.NAVIGATING_PORTAL)
+            with st.spinner(
+                (
+                    "Finding the official report service. No patient details are searched."
+                    if searching
+                    else "Opening and inspecting the report service without submitting anything."
+                ),
+                show_time=True,
+                width="stretch",
+            ):
+                execution = BrowserExecutor.from_settings(settings).execute(plan)
+
+        st.session_state.browser_action_result = execution.model_dump(mode="json")
+        if execution.success:
+            st.session_state.browser_execution_stage = "browser_execution:complete"
+            st.session_state.processing_status = "Report service found"
+            st.session_state.error_state = None
+            st.session_state.internal_error = None
+            _set_state(WorkflowState.BROWSER_OBSERVATION_READY)
+        else:
+            st.session_state.browser_execution_stage = "browser_execution:controlled_error"
+            st.session_state.processing_status = "Website inspection stopped"
+            st.session_state.error_state = _browser_error_message(execution.error_type)
+            st.session_state.internal_error = execution.error_type
+            _set_state(WorkflowState.FAILED)
+        st.rerun()
+    except (ValueError, TypeError) as exc:
+        logger.error("Browser execution input failed validation: %s", type(exc).__name__)
+        st.session_state.error_state = "We couldn't inspect the report service. Please try again."
+        st.session_state.internal_error = type(exc).__name__
+        st.session_state.processing_status = "Website inspection failed"
+        st.session_state.browser_execution_stage = "browser_execution:validation_error"
+        _set_state(WorkflowState.FAILED)
+        st.rerun()
+    except Exception as exc:  # Never log page content, form data, or document values.
+        logger.error("Unexpected browser execution failure: %s", type(exc).__name__)
+        st.session_state.error_state = "We couldn't inspect the report service. Please try again."
+        st.session_state.internal_error = type(exc).__name__
+        st.session_state.processing_status = "Website inspection failed"
+        st.session_state.browser_execution_stage = "browser_execution:unexpected_error"
+        _set_state(WorkflowState.FAILED)
+        st.rerun()
+
+
 def _render_developer_details(settings: Settings) -> None:
     if not settings.debug_mode:
         return
@@ -359,18 +537,22 @@ def _render_developer_details(settings: Settings) -> None:
                     "processing_status": st.session_state.processing_status,
                     "document_stage": st.session_state.document_processing_stage,
                     "planning_stage": st.session_state.planning_stage,
+                    "browser_stage": st.session_state.browser_execution_stage,
                     "error": st.session_state.error_state,
                     "internal_error": st.session_state.internal_error,
                     "run_session_id": st.session_state.run_session_id,
                     "environment": settings.app_env,
                     "document_provider": settings.document_ai_provider,
                     "document_model": settings.document_ai_model,
+                    "browser_headless": settings.browser_headless,
                 }
             )
             if st.session_state.document_understanding_result:
                 render_document_debug(st.session_state.document_understanding_result)
             if st.session_state.workflow_plan:
                 render_workflow_plan_debug(st.session_state.workflow_plan)
+            if st.session_state.browser_action_result:
+                render_browser_execution_debug(st.session_state.browser_action_result)
 
 
 def render_app(settings: Settings) -> None:
@@ -389,14 +571,26 @@ def render_app(settings: Settings) -> None:
     elif state == WorkflowState.DOCUMENT_UNDERSTOOD:
         _plan_workflow(main_area)
     elif state == WorkflowState.PLAN_READY:
+        _execute_browser(settings, main_area)
+    elif state == WorkflowState.BROWSER_OBSERVATION_READY:
         with main_area.container():
             result_data = st.session_state.document_understanding_result or {}
-            plan_data = st.session_state.workflow_plan or {}
-            render_plan_outcome(str(plan_data.get("status", "failed")))
+            render_browser_outcome()
             render_extracted_document(result_data)
             st.caption(
-                "Planning is complete. No website, search, or browser action has been executed."
+                "The service was inspected without submitting forms, entering credentials, "
+                "clicking report actions, or downloading files."
             )
+            if st.button(
+                "Scan another slip", icon=":material/restart_alt:", width="stretch"
+            ):
+                _reset_run(settings)
+    elif state == WorkflowState.UNSUPPORTED:
+        with main_area.container():
+            result_data = st.session_state.document_understanding_result or {}
+            render_plan_outcome("unsupported")
+            if result_data:
+                render_extracted_document(result_data)
             if st.button(
                 "Scan another slip", icon=":material/restart_alt:", width="stretch"
             ):
@@ -414,9 +608,17 @@ def render_app(settings: Settings) -> None:
     elif state == WorkflowState.FAILED:
         with main_area.container():
             render_error(st.session_state.error_state)
+            result_data = st.session_state.document_understanding_result or {}
+            if result_data:
+                render_portal_attempt_details(
+                    result_data,
+                    st.session_state.workflow_plan,
+                    st.session_state.browser_action_result,
+                )
+            _render_portal_recovery()
             st.write("")
             if st.button(
-                "Try again", type="primary", icon=":material/refresh:", width="stretch"
+                "Scan another slip", icon=":material/restart_alt:", width="stretch"
             ):
                 _reset_run(settings)
     else:

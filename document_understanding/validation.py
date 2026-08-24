@@ -15,6 +15,10 @@ def normalize_http_url(value: str) -> str | None:
     candidate = value.strip()
     if candidate.lower().startswith("www."):
         candidate = f"https://{candidate}"
+    elif "://" not in candidate:
+        possible_host = candidate.split("/", 1)[0]
+        if "." in possible_host and not any(char.isspace() for char in candidate):
+            candidate = f"https://{candidate}"
     parsed = urlparse(candidate)
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
         return None

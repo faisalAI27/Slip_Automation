@@ -4,6 +4,7 @@ from document_understanding.models import (
     AnalysisStatus,
     ConfidenceLevel,
     DocumentUnderstandingResult,
+    URLPurpose,
 )
 from utils.logger import get_logger
 from workflow.models import (
@@ -31,6 +32,7 @@ from workflow.validation import (
     sensitive_values,
     validate_plan,
     validate_search_query,
+    normalize_navigation_url,
 )
 
 
@@ -55,6 +57,52 @@ class WorkflowPlanner:
         logger.info("Planning completed: %s", validated.status.value.upper())
         logger.info("Next action type: %s", validated.required_next_action.type.value.upper())
         return validated
+
+    def plan_user_provided_url(
+        self, result: DocumentUnderstandingResult, value: str
+    ) -> WorkflowPlan:
+        """Create one validated OPEN_URL action after automatic discovery stops."""
+        normalized = normalize_navigation_url(value)
+        if normalized is None:
+            raise PlanningValidationError(
+                "Enter a public website such as https://hospital.example."
+            )
+        candidate = PortalCandidate(
+            url=normalized,
+            source=PortalSource.USER_PROVIDED_URL,
+            likely_purpose=URLPurpose.UNKNOWN,
+            confidence=ConfidenceLevel.MEDIUM,
+            reason="The user supplied this website after automatic discovery stopped.",
+        )
+        plan = WorkflowPlan(
+            goal=self._goal,
+            status=PlanningStatus.READY,
+            organization=known_organization(result),
+            portal_strategy=PortalStrategy.USER_PROVIDED_URL,
+            portal_candidates=[candidate],
+            available_fields=build_available_fields(result),
+            required_next_action=NextAction(
+                type=ActionType.OPEN_URL,
+                target=normalized,
+                reason=candidate.reason,
+                confidence=ConfidenceLevel.MEDIUM,
+            ),
+            user_input_requirement=UserInputRequirement(
+                required=False, reason=None, requested_information=[]
+            ),
+            warnings=list(
+                dict.fromkeys(
+                    [
+                        *result.warnings,
+                        "Automatic portal discovery stopped; a user-provided public website is being checked.",
+                    ]
+                )
+            ),
+            planner_summary=(
+                "A user-provided public website is ready for one safe, observation-only check."
+            ),
+        )
+        return validate_plan(plan, result)
 
     def _build_plan(self, result: DocumentUnderstandingResult) -> WorkflowPlan:
         organization = known_organization(result)
@@ -91,6 +139,7 @@ class WorkflowPlanner:
                 PortalSource.PRINTED_URL: PortalStrategy.EXPLICIT_REPORT_URL,
                 PortalSource.QR_CODE: PortalStrategy.QR_REPORT_URL,
                 PortalSource.ORGANIZATION_HOMEPAGE: PortalStrategy.ORGANIZATION_HOMEPAGE,
+                PortalSource.USER_PROVIDED_URL: PortalStrategy.USER_PROVIDED_URL,
                 PortalSource.FUTURE_WEB_SEARCH: PortalStrategy.WEB_SEARCH,
             }[selected.source]
             if has_low_confidence_context(result):

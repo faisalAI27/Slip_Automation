@@ -183,7 +183,8 @@ def select_portal_candidate(
         PortalSource.PRINTED_URL: 0,
         PortalSource.QR_CODE: 1,
         PortalSource.ORGANIZATION_HOMEPAGE: 2,
-        PortalSource.FUTURE_WEB_SEARCH: 3,
+        PortalSource.USER_PROVIDED_URL: 3,
+        PortalSource.FUTURE_WEB_SEARCH: 4,
     }
     confidence_priority = {
         ConfidenceLevel.HIGH: 0,

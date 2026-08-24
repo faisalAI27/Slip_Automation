@@ -1,4 +1,6 @@
-"""Reserved boundary for Phase 3 browser automation.
+"""Controlled Phase 4 browser execution and page-observation interfaces."""
 
-No portal discovery, navigation, or report retrieval is implemented in Phase 2.
-"""
+from browser_agent.executor import BrowserExecutor
+from browser_agent.models import BrowserActionResult, BrowserObservation
+
+__all__ = ["BrowserActionResult", "BrowserExecutor", "BrowserObservation"]
