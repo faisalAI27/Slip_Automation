@@ -1,6 +1,6 @@
 # Get My Lab Report — Phase 5
 
-This Streamlit app accepts a hospital or laboratory slip image, turns it into a validated semantic representation, builds a deterministic retrieval plan, and uses one bounded private browser session to retrieve a validated PDF or image report when the portal supports safe automation. Local development uses Ollama and Playwright Chromium, so no API key or API subscription is required.
+This Streamlit app accepts a hospital or laboratory slip image, turns it into a validated semantic representation, builds a deterministic retrieval plan, and uses one bounded private browser session to retrieve a validated PDF or image report when the portal supports safe automation. Document understanding can use Gemini for faster cloud inference, Ollama for local inference, or the existing OpenAI provider. Browser interaction remains deterministic.
 
 > **Current status:** Phases 1–4 upload, understand, plan, and observe. Phase 5 continues from `BROWSER_OBSERVATION_READY`, semantically maps document fields to observed website fields, performs at most one authentication submission, and captures only a validated PDF or image report. One report is selected automatically; when every available report has a date, the unique latest report is selected. CAPTCHA, OTP, tied or undated choices, missing fields, unsafe domains, and unsupported portal designs cause a controlled stop.
 
@@ -10,7 +10,7 @@ This application is intended only for retrieving reports that the user or patien
 
 Python 3.11 or newer is recommended.
 
-Install [Ollama](https://ollama.com/download) once, then prepare the project:
+Prepare the project:
 
 ```bash
 cd /Users/faisalimran/Desktop/Slip_Automation
@@ -22,14 +22,14 @@ playwright install chromium
 cp .env.example .env
 ```
 
-Start Ollama and download the local vision model once. Check the size reported by Ollama before downloading because model artifacts can change:
+For the local Ollama fallback, install [Ollama](https://ollama.com/download), start it, and download the vision model once. Check the size reported by Ollama before downloading because model artifacts can change:
 
 ```bash
 open -a Ollama
 ollama pull qwen3-vl:4b-instruct
 ```
 
-Keep Ollama running, then start Streamlit:
+When Ollama is selected, keep it running. Then start Streamlit:
 
 ```bash
 source .venv/bin/activate
@@ -68,6 +68,9 @@ Environment access is centralized in `config/settings.py`.
 | `OLLAMA_TIMEOUT_SECONDS` | `420` | Local inference timeout, including first model load |
 | `DOCUMENT_AI_API_KEY` | empty | Optional credential for a later paid OpenAI deployment |
 | `DOCUMENT_AI_TIMEOUT_SECONDS` | `90` | Optional paid-provider request timeout |
+| `GEMINI_API_KEY` | empty | Gemini API credential; set only in the ignored local `.env` |
+| `GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/openai/` | Gemini OpenAI-compatible endpoint |
+| `GEMINI_TIMEOUT_SECONDS` | `90` | Gemini document-analysis request timeout |
 | `BROWSER_HEADLESS` | `true` | Runs isolated Chromium without displaying a browser window |
 | `BROWSER_TIMEOUT_SECONDS` | `30` | General browser/inspection timeout |
 | `BROWSER_NAVIGATION_TIMEOUT_SECONDS` | `45` | Maximum initial navigation wait |
@@ -82,9 +85,37 @@ Environment access is centralized in `config/settings.py`.
 | `PORTAL_URL_OVERRIDES_JSON` | `{}` | Optional administrator-managed obsolete-host to verified HTTPS portal mapping |
 | `PORTAL_HTTPS_HOST_REWRITES_JSON` | `{}` | Optional HTTP portal hostname to verified HTTPS origin mapping for safe redirects |
 
-Ollama mode does not read or require `DOCUMENT_AI_API_KEY`. If Ollama is stopped, the app asks the developer to start it. If the configured model has not been downloaded, Developer Mode shows the safe configuration reason.
+Ollama mode does not read or require an API key. If Ollama is stopped, the app asks the developer to start it. If the configured model has not been downloaded, Developer Mode shows the safe configuration reason.
 
-For a later paid deployment, switch only the provider configuration:
+## AI provider
+
+Provider selection is controlled entirely through `.env`; no source-code changes are needed.
+
+### Gemini — recommended for speed
+
+```env
+DOCUMENT_AI_PROVIDER=gemini
+DOCUMENT_AI_MODEL=gemini-3.7-flash
+
+GEMINI_API_KEY=your_key_here
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+GEMINI_TIMEOUT_SECONDS=90
+```
+
+Gemini provides faster cloud inference and requires internet access and API credentials. When Gemini is selected, the uploaded slip image is sent to the configured Gemini API for document understanding. The independent QR decoder still runs locally.
+
+Gemini uses the OpenAI-compatible structured Chat Completions interface. If its preferred parsed-output helper is unavailable, the provider makes a controlled JSON-schema request and still validates the response locally. Transient connection, rate-limit, or server-capacity failures receive at most one application-level retry.
+
+### Ollama — local fallback
+
+```env
+DOCUMENT_AI_PROVIDER=ollama
+DOCUMENT_AI_MODEL=qwen3-vl:4b-instruct
+```
+
+Ollama keeps document understanding on this Mac and requires no cloud API, but it can be slower on limited hardware.
+
+The existing OpenAI provider remains available:
 
 ```env
 DOCUMENT_AI_PROVIDER=openai
@@ -94,15 +125,15 @@ DOCUMENT_AI_API_KEY=your_api_key_here
 
 ## Test the complete Phase 5 flow
 
-1. Run `open -a Ollama` and confirm `ollama list` contains `qwen3-vl:4b-instruct`. The smaller `qwen3-vl:2b-instruct` remains an optional faster fallback, but it is less reliable for small printed URLs.
+1. Configure Gemini as shown above, or run `open -a Ollama` and confirm `ollama list` contains `qwen3-vl:4b-instruct` for local mode. The smaller `qwen3-vl:2b-instruct` remains an optional faster Ollama fallback, but it is less reliable for small printed URLs.
 2. Optionally set `DEBUG_MODE=true` to inspect structured output locally.
 3. Start the app and upload a clear JPG or PNG containing the whole slip.
-4. Select **Get report**. The first request can be slower while the model loads into memory.
-5. Phase 2 analyzes the temporary image locally and Phase 3 immediately creates a plan.
+4. Select **Get report**. Provider startup or temporary cloud demand can make an occasional request slower.
+5. Phase 2 analyzes the temporary image using the selected provider and Phase 3 immediately creates a plan. QR decoding remains local in every mode.
 6. For `READY` or `SEARCH_REQUIRED`, Phase 4 safely observes the public report service.
 7. Phase 5 restarts one private browser session, uses high-confidence semantic mappings, submits authentication at most once, and observes again after every page-changing action.
 8. A single valid report—or the unique latest dated report—produces **Your report is ready** and a **Download report** button. Missing fields, tied or undated choices, CAPTCHA, OTP, unsafe HTTP forms, and unknown credential destinations stop safely.
-9. In Developer details, review the sanitized agent status, action history, field mappings, observations, and download validation metadata. Values and the local report path are omitted.
+9. In Developer details, compare the safe document provider, model, and analysis duration, then review the sanitized agent status, action history, field mappings, observations, and download validation metadata. API keys, image data, request payloads, field values, and the local report path are omitted.
 
 Useful manual cases:
 
@@ -134,7 +165,8 @@ The automated browser tests use mocks and synthetic semantic snapshots rather th
 │   ├── prompts.py                   # Central whole-document prompt
 │   ├── provider.py                  # Provider protocol, errors, and factory
 │   ├── ollama_provider.py           # Default free local implementation
-│   ├── openai_provider.py           # Optional later paid implementation
+│   ├── gemini_provider.py           # Gemini OpenAI-compatible implementation
+│   ├── openai_provider.py           # Optional OpenAI implementation
 │   ├── parser.py                    # Structured-output parsing
 │   ├── validation.py                # URL checks, normalization, deduplication
 │   ├── qr.py                        # Independent non-blocking QR decoding
@@ -177,13 +209,14 @@ The UI and workflow depend only on `DocumentVisionProvider`, not directly on a v
 - Uploaded images, `.env`, and generated artifacts are excluded from Git.
 - Logs record workflow state and categorical status only—not extracted names, IDs, access codes, passwords, or complete results.
 - Debug mode can reveal sensitive extracted data locally and is clearly labelled; avoid screenshots and keep it disabled outside testing.
-- In default Ollama mode, AI inference stays on the Mac and no external AI service receives the image.
+- In Ollama mode, AI inference stays on the Mac and no external AI service receives the image.
+- In Gemini mode, the uploaded slip image is sent to the configured Gemini API for document understanding. Do not claim or assume that this processing is local.
 - Phase 4 necessarily contacts the selected public website or DuckDuckGo. Search queries are validated twice and may contain organization/public terms only.
 - Chromium uses a non-persistent private context with service workers blocked and no saved profile. Unsolicited downloads and popups are blocked; expected validated report actions are temporarily allowed.
 - Page HTML and screenshots are not stored. Structured page text is bounded, and input values are never captured.
 - All webpage content is treated as untrusted observation data. It cannot change the workflow goal, allowed actions, or privacy rules.
 - An HTTP Wi-Fi connection is not appropriate for real patient documents. Use private HTTPS or test with synthetic documents.
-- If the optional OpenAI provider is selected later, the image is sent to that provider. Its request uses `store=False`.
+- If the OpenAI provider is selected, the image is sent to that provider. Its request uses `store=False`.
 - Local processing is not by itself a complete medical-data security or compliance program. A real deployment still requires organization-specific retention, access-control, encryption, consent, audit, and legal review.
 
 DuckDuckGo or a medical portal may present human verification to automated Chromium. The app stops safely and does not attempt to bypass CAPTCHA, OTP, email verification, or other access controls.

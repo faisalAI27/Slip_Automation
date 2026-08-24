@@ -209,6 +209,34 @@ class UserInterfaceTests(unittest.TestCase):
         self.assertIn("Links", subheaders)
         self.assertIn("Download candidates", subheaders)
 
+    def test_developer_details_show_only_safe_document_provider_metadata(self) -> None:
+        source = """
+from dataclasses import replace
+import streamlit as st
+from config.settings import get_settings
+from ui.main_page import _initialize_session, _render_developer_details
+
+settings = replace(
+    get_settings(),
+    debug_mode=True,
+    document_ai_provider="gemini",
+    document_ai_model="gemini-3.7-flash",
+    gemini_api_key="TOP-SECRET-KEY",
+)
+_initialize_session()
+st.session_state.document_analysis_duration_seconds = 2.718
+_render_developer_details(settings)
+"""
+        app = AppTest.from_string(source).run(timeout=15)
+        app.toggle[0].set_value(True).run(timeout=15)
+
+        self.assertFalse(app.exception)
+        metadata = app.json[0].value
+        self.assertIn('"document_provider": "gemini"', metadata)
+        self.assertIn('"document_model": "gemini-3.7-flash"', metadata)
+        self.assertIn('"document_analysis_seconds": 2.72', metadata)
+        self.assertNotIn("TOP-SECRET-KEY", metadata)
+
     def test_validated_pdf_is_exposed_as_download_report(self) -> None:
         app_path = Path(__file__).resolve().parents[1] / "app.py"
         settings = get_settings()

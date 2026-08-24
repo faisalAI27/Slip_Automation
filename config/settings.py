@@ -46,6 +46,9 @@ class Settings:
     document_ai_model: str
     document_ai_api_key: str | None
     document_ai_timeout_seconds: float
+    gemini_api_key: str | None
+    gemini_base_url: str
+    gemini_timeout_seconds: float
     ollama_base_url: str
     ollama_timeout_seconds: float
     browser_headless: bool
@@ -69,6 +72,7 @@ def get_settings() -> Settings:
     raw_temp_dir = Path(os.getenv("TEMP_DIR", "temp"))
     temp_dir = raw_temp_dir if raw_temp_dir.is_absolute() else PROJECT_ROOT / raw_temp_dir
     document_api_key = (os.getenv("DOCUMENT_AI_API_KEY") or "").strip() or None
+    gemini_api_key = (os.getenv("GEMINI_API_KEY") or "").strip() or None
 
     return Settings(
         app_env=os.getenv("APP_ENV", "development"),
@@ -84,6 +88,12 @@ def get_settings() -> Settings:
         document_ai_timeout_seconds=float(
             os.getenv("DOCUMENT_AI_TIMEOUT_SECONDS", "90")
         ),
+        gemini_api_key=gemini_api_key,
+        gemini_base_url=os.getenv(
+            "GEMINI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        ).strip(),
+        gemini_timeout_seconds=float(os.getenv("GEMINI_TIMEOUT_SECONDS", "90")),
         ollama_base_url=os.getenv(
             "OLLAMA_BASE_URL", "http://127.0.0.1:11434"
         ).strip(),

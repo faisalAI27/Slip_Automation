@@ -61,6 +61,22 @@ def create_document_provider(settings: Settings) -> DocumentVisionProvider:
             timeout_seconds=settings.document_ai_timeout_seconds,
         )
 
+    if provider_name == "gemini":
+        if not settings.gemini_api_key:
+            raise ProviderConfigurationError("GEMINI_API_KEY is not configured.")
+        if not settings.gemini_base_url:
+            raise ProviderConfigurationError("GEMINI_BASE_URL is not configured.")
+        from document_understanding.gemini_provider import (
+            GeminiDocumentVisionProvider,
+        )
+
+        return GeminiDocumentVisionProvider(
+            api_key=settings.gemini_api_key,
+            base_url=settings.gemini_base_url,
+            model=model_name,
+            timeout_seconds=settings.gemini_timeout_seconds,
+        )
+
     raise ProviderConfigurationError(
         f"Unsupported document provider: {provider_name or 'not set'}"
     )

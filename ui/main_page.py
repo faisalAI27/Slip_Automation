@@ -2,6 +2,7 @@
 
 from hashlib import sha256
 from pathlib import Path
+from time import perf_counter
 import uuid
 
 import streamlit as st
@@ -79,6 +80,7 @@ DEFAULT_SESSION_VALUES = {
     "auto_retrieve_requested": False,
     "developer_mode_enabled": False,
     "document_processing_stage": None,
+    "document_analysis_duration_seconds": None,
     "planning_stage": None,
     "browser_execution_stage": None,
     "portal_recovery_error": None,
@@ -265,13 +267,20 @@ def _process_document(settings: Settings, area: object) -> None:
     _set_state(WorkflowState.PROCESSING_DOCUMENT)
     st.session_state.processing_status = "Reading your slip"
     st.session_state.document_processing_stage = "document_analysis:running"
+    st.session_state.document_analysis_duration_seconds = None
+    analysis_started_at = perf_counter()
 
     try:
         provider = create_document_provider(settings)
+        analysis_message = (
+            "Reading your slip locally..."
+            if settings.document_ai_provider.strip().lower() == "ollama"
+            else "Reading your slip..."
+        )
         with progress_area.container():
             render_progress(WorkflowState.PROCESSING_DOCUMENT)
             with st.spinner(
-                "Analyzing locally on this Mac. The first scan may take a few minutes.",
+                analysis_message,
                 show_time=True,
                 width="stretch",
             ):
@@ -280,6 +289,10 @@ def _process_document(settings: Settings, area: object) -> None:
                 )
         st.session_state.document_understanding_result = result.model_dump(mode="json")
         st.session_state.document_processing_stage = "document_analysis:complete"
+        st.session_state.document_analysis_duration_seconds = round(
+            perf_counter() - analysis_started_at,
+            3,
+        )
 
         if result.analysis_status == AnalysisStatus.UNCLEAR:
             st.session_state.error_state = (
@@ -304,6 +317,8 @@ def _process_document(settings: Settings, area: object) -> None:
         logger.warning("Document analysis timed out")
         st.session_state.error_state = (
             "Local analysis took too long. Please try once more and keep only one app tab open."
+            if settings.document_ai_provider.strip().lower() == "ollama"
+            else "Reading the slip took too long. Please try again."
         )
         st.session_state.internal_error = str(exc)
         st.session_state.processing_status = "Document analysis timed out"
@@ -830,6 +845,11 @@ def _render_developer_details(settings: Settings) -> None:
                     "environment": settings.app_env,
                     "document_provider": settings.document_ai_provider,
                     "document_model": settings.document_ai_model,
+                    "document_analysis_seconds": (
+                        round(st.session_state.document_analysis_duration_seconds, 2)
+                        if st.session_state.document_analysis_duration_seconds is not None
+                        else None
+                    ),
                     "browser_headless": settings.browser_headless,
                     "agent_max_steps": settings.agent_max_steps,
                 }
