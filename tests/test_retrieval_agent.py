@@ -278,6 +278,23 @@ class RetrievalAgentTests(unittest.TestCase):
         self.assertEqual(result.status, RetrievalStatus.USER_INPUT_REQUIRED)
         self.assertEqual(tools.clicks, ["button_1"])
 
+    def test_returned_login_form_is_not_refilled_or_resubmitted(self) -> None:
+        tools = FakeTools(
+            [
+                _login(),
+                _observation(PageType.UNKNOWN, summary="Loading reports"),
+                _login(),
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.USER_INPUT_REQUIRED)
+        self.assertEqual(tools.clicks, ["button_1"])
+        self.assertEqual(len(tools.fills), 2)
+        self.assertEqual(tools.waits, [2.0])
+        self.assertIn("remained on its login page", result.failure_reason)
+
     def test_started_authentication_is_audited_when_inspection_fails(self) -> None:
         tools = FailingPostClickTools([_login()])
 
@@ -310,6 +327,26 @@ class RetrievalAgentTests(unittest.TestCase):
             [item.action_type.value for item in result.safe_action_history],
             ["open_url", "fill_field", "fill_field", "click", "wait", "download"],
         )
+
+    def test_slow_post_login_page_is_reinspected_within_total_wait_limit(self) -> None:
+        tools = FakeTools(
+            [
+                _login(),
+                _observation(PageType.UNKNOWN, summary="Loading reports"),
+                _observation(PageType.UNKNOWN, summary="Still loading reports"),
+                _observation(
+                    PageType.REPORT_LIST_PAGE,
+                    downloads=[_download()],
+                ),
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
+        self.assertEqual(tools.clicks, ["button_1"])
+        self.assertEqual(tools.waits, [2.0, 2.0])
+        self.assertEqual(tools.downloads, ["link_1"])
 
     def test_transient_post_login_candidates_are_ignored_until_page_loads(self) -> None:
         tools = FakeTools(
@@ -354,6 +391,31 @@ class RetrievalAgentTests(unittest.TestCase):
             result.user_input_requirement.requested_information,
             ["Date of Birth"],
         )
+
+    def test_internal_field_ambiguity_does_not_request_a_fake_confirmation(self) -> None:
+        document, plan = _document_and_plan()
+        payload = document.model_dump(mode="json")
+        payload["fields"].append(
+            {
+                "label": "Patient ID",
+                "value": "SECOND-ID",
+                "semantic_type": "patient_identifier",
+                "confidence": "high",
+            }
+        )
+        ambiguous_document = DocumentUnderstandingResult.model_validate(payload)
+        ambiguous_plan = WorkflowPlanner().plan(ambiguous_document)
+        tools = FakeTools([_login()])
+
+        result = RetrievalAgent(lambda _store: tools).run(
+            ambiguous_document,
+            ambiguous_plan,
+        )
+
+        self.assertEqual(result.status, RetrievalStatus.AMBIGUOUS)
+        self.assertEqual(result.user_input_requirement.requested_information, [])
+        self.assertIn("clearer slip image", result.failure_reason or "")
+        self.assertEqual(tools.fills, [])
 
     def test_individual_report_is_preferred_over_download_all(self) -> None:
         tools = FakeTools(

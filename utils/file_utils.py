@@ -5,14 +5,15 @@ from io import BytesIO
 from pathlib import Path
 import uuid
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from utils.logger import get_logger
 
 
 logger = get_logger(__name__)
-SUPPORTED_FORMATS = {"JPEG": ".jpg", "PNG": ".png"}
+SUPPORTED_FORMATS = {"JPEG", "MPO", "PNG", "WEBP", "AVIF", "HEIF", "HEIC"}
 SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png"}
+MAX_PROCESSING_DIMENSION = 1_600
 
 
 class UploadValidationError(ValueError):
@@ -57,18 +58,50 @@ def save_uploaded_image(
 
     try:
         with Image.open(BytesIO(file_data)) as image:
-            image_format = image.format
-            image.verify()
+            image_format = (image.format or "").upper()
+            if image_format not in SUPPORTED_FORMATS:
+                raise UnsupportedImageError("Unsupported decoded image format.")
+            image.seek(0)
+            image.load()
+            normalized = ImageOps.exif_transpose(image)
+            normalized.thumbnail(
+                (MAX_PROCESSING_DIMENSION, MAX_PROCESSING_DIMENSION),
+                Image.Resampling.LANCZOS,
+                reducing_gap=3.0,
+            )
+            output = BytesIO()
+            if image_format == "PNG":
+                normalized.save(output, format="PNG", optimize=True)
+                extension = ".png"
+            else:
+                if "A" in normalized.getbands():
+                    alpha = normalized.getchannel("A")
+                    flattened = Image.new("RGB", normalized.size, "white")
+                    flattened.paste(normalized.convert("RGB"), mask=alpha)
+                else:
+                    flattened = normalized.convert("RGB")
+                flattened.save(
+                    output,
+                    format="JPEG",
+                    quality=92,
+                    optimize=True,
+                )
+                extension = ".jpg"
+            normalized_data = output.getvalue()
+    except UnsupportedImageError:
+        raise
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise InvalidImageError("The uploaded image could not be decoded.") from exc
 
-    if image_format not in SUPPORTED_FORMATS:
-        raise UnsupportedImageError("Unsupported decoded image format.")
+    if not normalized_data:
+        raise InvalidImageError("The uploaded image could not be normalized.")
+    if len(normalized_data) > max_upload_mb * 1024 * 1024:
+        raise ImageTooLargeError("The normalized image exceeds the configured limit.")
 
     ensure_temp_directory(temp_dir)
-    output_path = temp_dir / f"upload-{uuid.uuid4().hex}{SUPPORTED_FORMATS[image_format]}"
-    output_path.write_bytes(file_data)
-    logger.info("Validated image saved to temporary storage")
+    output_path = temp_dir / f"upload-{uuid.uuid4().hex}{extension}"
+    output_path.write_bytes(normalized_data)
+    logger.info("Validated and normalized image saved to temporary storage")
     return output_path
 
 

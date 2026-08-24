@@ -13,6 +13,11 @@ Rules:
   purpose—not from an exact-label lookup.
 - Distinguish patient/registration/visit/reference/sample/report identifiers from
   access credentials. Use "unknown" when the role is ambiguous.
+- When visibly labeled USER ID, USERNAME, LOGIN ID, PASSWORD, PASSCODE, PIN, or
+  ACCESS CODE pairs are present, include each one as a separate field. Classify
+  the login identifier according to its visible context and classify the secret
+  value as access_credential. Do not omit these fields merely because they also
+  appear in an instruction or summary.
 - Identify every visible URL and its context, but never visit it.
 - Identify visible QR content only when confidently readable. An independent decoder
   will also run, so an empty qr_codes list is acceptable.

@@ -134,7 +134,7 @@ class RetrievalAgent:
         steps = 0
         navigations = 0
         authentication_submissions = 0
-        post_authentication_waits = 0
+        post_authentication_wait_seconds = 0.0
         filled_inputs: set[str] = set()
         loop_counts: dict[tuple[str, str | None, str | None, str | None], int] = {}
         observation: BrowserObservation | None = None
@@ -287,6 +287,28 @@ class RetrievalAgent:
                         )
 
                     if observation.authentication_signals.authentication_required:
+                        if authentication_submissions >= 1:
+                            return self._result(
+                                RetrievalStatus.USER_INPUT_REQUIRED,
+                                observation=observation,
+                                tools=tools,
+                                steps=steps,
+                                history=history,
+                                mappings=mappings,
+                                reason=(
+                                    "The report website remained on its login page "
+                                    "after one automatic attempt."
+                                ),
+                                requested=list(
+                                    dict.fromkeys(
+                                        item.page_field_label
+                                        or item.document_label
+                                        or "Report-access information"
+                                        for item in mappings
+                                    )
+                                )
+                                or ["Correct report-access details"],
+                            )
                         mapping = self._field_matcher.match(
                             field_store.descriptors,
                             observation.input_fields,
@@ -300,8 +322,10 @@ class RetrievalAgent:
                                 steps=steps,
                                 history=history,
                                 mappings=mappings,
-                                reason="The website fields could not be matched confidently.",
-                                requested=["Confirm the report-access fields"],
+                                reason=(
+                                    "More than one extracted value could match the same "
+                                    "website field. Please retry with a clearer slip image."
+                                ),
                             )
                         if mapping.unmatched_required_inputs:
                             return self._result(
@@ -430,10 +454,15 @@ class RetrievalAgent:
                         filled_inputs.clear()
                         if (
                             observation.page_type == PageType.UNKNOWN
-                            and post_authentication_waits == 0
+                            and post_authentication_wait_seconds
+                            < self._config.max_wait_seconds
                             and self._config.max_wait_seconds > 0
                         ):
-                            wait_seconds = min(2.0, self._config.max_wait_seconds)
+                            wait_seconds = min(
+                                2.0,
+                                self._config.max_wait_seconds
+                                - post_authentication_wait_seconds,
+                            )
                             wait_action = AgentAction(
                                 type=AgentActionType.WAIT,
                                 wait_seconds=wait_seconds,
@@ -445,7 +474,7 @@ class RetrievalAgent:
                             )
                             observation = tools.wait(wait_action)
                             steps += 1
-                            post_authentication_waits += 1
+                            post_authentication_wait_seconds += wait_seconds
                             self._record(
                                 history,
                                 steps,
@@ -559,10 +588,15 @@ class RetrievalAgent:
                         )
                     if (
                         authentication_submissions > 0
-                        and post_authentication_waits == 0
+                        and post_authentication_wait_seconds
+                        < self._config.max_wait_seconds
                         and self._config.max_wait_seconds > 0
                     ):
-                        wait_seconds = min(2.0, self._config.max_wait_seconds)
+                        wait_seconds = min(
+                            2.0,
+                            self._config.max_wait_seconds
+                            - post_authentication_wait_seconds,
+                        )
                         action = AgentAction(
                             type=AgentActionType.WAIT,
                             wait_seconds=wait_seconds,
@@ -571,7 +605,7 @@ class RetrievalAgent:
                         )
                         observation = tools.wait(action)
                         steps += 1
-                        post_authentication_waits += 1
+                        post_authentication_wait_seconds += wait_seconds
                         self._record(history, steps, action, tools.current_domain)
                         continue
                     return self._result(
