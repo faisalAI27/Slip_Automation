@@ -1,4 +1,6 @@
-"""Reserved boundary for future document-understanding services.
+"""General, provider-neutral medical document understanding."""
 
-No OCR, AI, or document interpretation is implemented in Step 1.
-"""
+from document_understanding.models import DocumentUnderstandingResult
+from document_understanding.service import DocumentUnderstandingService
+
+__all__ = ["DocumentUnderstandingResult", "DocumentUnderstandingService"]

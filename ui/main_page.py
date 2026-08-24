@@ -7,15 +7,25 @@ import uuid
 import streamlit as st
 
 from config.settings import Settings
-from downloads import create_mock_report
+from document_understanding.models import AnalysisStatus
+from document_understanding.provider import (
+    ProviderConfigurationError,
+    ProviderResponseError,
+    ProviderTimeoutError,
+    ProviderUnavailableError,
+    create_document_provider,
+)
+from document_understanding.service import DocumentUnderstandingService
 from ui.components import (
     render_error,
     render_footer,
     render_header,
     render_image_preview,
     render_progress,
-    render_result,
+    render_understanding_outcome,
 )
+from ui.developer_view import render_document_debug
+from ui.result_view import render_extracted_document
 from ui.styles import APP_CSS
 from utils.file_utils import (
     ImageTooLargeError,
@@ -25,7 +35,6 @@ from utils.file_utils import (
     save_uploaded_image,
 )
 from utils.logger import get_logger
-from workflow.mock_processor import run_mock_workflow
 from workflow.state import WorkflowState
 
 
@@ -39,9 +48,10 @@ DEFAULT_SESSION_VALUES = {
     "processing_status": None,
     "error_state": None,
     "resulting_file_path": None,
+    "document_understanding_result": None,
     "developer_mode_enabled": False,
-    "mock_processing_stage": None,
-    "show_report_preview": False,
+    "document_processing_stage": None,
+    "internal_error": None,
 }
 
 
@@ -72,6 +82,7 @@ def _reset_run(settings: Settings) -> None:
         "photo_input_method",
         "upload_slip",
         "camera_slip",
+        "show_raw_document_json",
         "run_session_id",
     ]:
         st.session_state.pop(key, None)
@@ -131,7 +142,9 @@ def _accept_selected_image(selected_file: object, settings: Settings) -> None:
     st.session_state.uploaded_fingerprint = fingerprint
     st.session_state.temporary_image_path = str(stored_path)
     st.session_state.resulting_file_path = None
+    st.session_state.document_understanding_result = None
     st.session_state.error_state = None
+    st.session_state.internal_error = None
     st.session_state.processing_status = "Photo ready"
     _set_state(WorkflowState.IMAGE_UPLOADED)
 
@@ -190,27 +203,86 @@ def _render_upload_area(settings: Settings) -> bool:
     return False
 
 
-def _process_demo(settings: Settings, area: object) -> None:
+def _process_document(settings: Settings, area: object) -> None:
     area.empty()
     progress_area = st.empty()
-    try:
-        for update in run_mock_workflow(settings.mock_stage_delay_seconds):
-            _set_state(update.state)
-            st.session_state.processing_status = update.user_message
-            st.session_state.mock_processing_stage = update.internal_stage
-            with progress_area.container():
-                render_progress(update.state)
+    _set_state(WorkflowState.PROCESSING_DOCUMENT)
+    st.session_state.processing_status = "Reading your slip"
+    st.session_state.document_processing_stage = "document_analysis:running"
 
-        result_path = create_mock_report(settings.temp_dir)
-        st.session_state.resulting_file_path = str(result_path)
-        st.session_state.processing_status = "Demo report ready"
-        _set_state(WorkflowState.COMPLETED)
+    try:
+        provider = create_document_provider(settings)
+        with progress_area.container():
+            render_progress(WorkflowState.PROCESSING_DOCUMENT)
+            with st.spinner(
+                "Analyzing locally on this Mac. The first scan may take a few minutes.",
+                show_time=True,
+                width="stretch",
+            ):
+                result = DocumentUnderstandingService(provider).analyze(
+                    Path(st.session_state.temporary_image_path)
+                )
+        st.session_state.document_understanding_result = result.model_dump(mode="json")
+        st.session_state.document_processing_stage = "document_analysis:complete"
+
+        if result.analysis_status == AnalysisStatus.UNCLEAR:
+            st.session_state.error_state = (
+                "We couldn't clearly read this slip. Please take a clearer photo and try again."
+            )
+            st.session_state.processing_status = "Slip could not be read clearly"
+            _set_state(WorkflowState.FAILED)
+        else:
+            st.session_state.error_state = None
+            st.session_state.processing_status = "Slip understood"
+            _set_state(WorkflowState.DOCUMENT_UNDERSTOOD)
         st.rerun()
-    except Exception as exc:  # Keep technical details in logs/developer mode only.
-        logger.exception("Mock workflow failed")
+    except ProviderConfigurationError as exc:
+        logger.warning("Document analysis configuration error")
+        st.session_state.error_state = "Document analysis is not configured yet."
+        st.session_state.internal_error = str(exc)
+        st.session_state.processing_status = "Configuration required"
+        st.session_state.document_processing_stage = "document_analysis:configuration_error"
+        _set_state(WorkflowState.FAILED)
+        st.rerun()
+    except ProviderTimeoutError as exc:
+        logger.warning("Document analysis timed out")
+        st.session_state.error_state = (
+            "Local analysis took too long. Please try once more and keep only one app tab open."
+        )
+        st.session_state.internal_error = str(exc)
+        st.session_state.processing_status = "Document analysis timed out"
+        st.session_state.document_processing_stage = "document_analysis:timeout"
+        _set_state(WorkflowState.FAILED)
+        st.rerun()
+    except ProviderUnavailableError as exc:
+        logger.warning("Document analysis provider is unavailable")
+        if settings.document_ai_provider.strip().lower() == "ollama":
+            st.session_state.error_state = (
+                "Local document analysis isn't running. Please start Ollama and try again."
+            )
+        else:
+            st.session_state.error_state = (
+                "We couldn't connect to the document service. Please try again."
+            )
+        st.session_state.internal_error = str(exc)
+        st.session_state.processing_status = "Service unavailable"
+        st.session_state.document_processing_stage = "document_analysis:service_error"
+        _set_state(WorkflowState.FAILED)
+        st.rerun()
+    except ProviderResponseError as exc:
+        logger.warning("Document analysis provider returned an unusable response")
         st.session_state.error_state = "We couldn't complete the process. Please try again."
-        st.session_state.processing_status = "Processing failed"
-        st.session_state.mock_processing_stage = f"mock:error:{type(exc).__name__}"
+        st.session_state.internal_error = str(exc)
+        st.session_state.processing_status = "Document analysis failed"
+        st.session_state.document_processing_stage = "document_analysis:response_error"
+        _set_state(WorkflowState.FAILED)
+        st.rerun()
+    except Exception as exc:  # Never expose or log sensitive document content.
+        logger.error("Unexpected document analysis failure: %s", type(exc).__name__)
+        st.session_state.error_state = "We couldn't complete the process. Please try again."
+        st.session_state.internal_error = type(exc).__name__
+        st.session_state.processing_status = "Document analysis failed"
+        st.session_state.document_processing_stage = "document_analysis:unexpected_error"
         _set_state(WorkflowState.FAILED)
         st.rerun()
 
@@ -227,12 +299,17 @@ def _render_developer_details(settings: Settings) -> None:
                     "temporary_image_path": st.session_state.temporary_image_path,
                     "resulting_file_path": st.session_state.resulting_file_path,
                     "processing_status": st.session_state.processing_status,
-                    "mock_stage": st.session_state.mock_processing_stage,
+                    "document_stage": st.session_state.document_processing_stage,
                     "error": st.session_state.error_state,
+                    "internal_error": st.session_state.internal_error,
                     "run_session_id": st.session_state.run_session_id,
                     "environment": settings.app_env,
+                    "document_provider": settings.document_ai_provider,
+                    "document_model": settings.document_ai_model,
                 }
             )
+            if st.session_state.document_understanding_result:
+                render_document_debug(st.session_state.document_understanding_result)
 
 
 def render_app(settings: Settings) -> None:
@@ -247,11 +324,16 @@ def render_app(settings: Settings) -> None:
         with main_area.container():
             should_process = _render_upload_area(settings)
         if should_process:
-            _process_demo(settings, main_area)
-    elif state == WorkflowState.COMPLETED and st.session_state.resulting_file_path:
+            _process_document(settings, main_area)
+    elif state == WorkflowState.DOCUMENT_UNDERSTOOD:
         with main_area.container():
-            render_result(Path(st.session_state.resulting_file_path))
-            st.write("")
+            result_data = st.session_state.document_understanding_result or {}
+            render_understanding_outcome(str(result_data.get("analysis_status", "unknown")))
+            render_extracted_document(result_data)
+            st.caption(
+                "Online report retrieval will be added in the next phase. "
+                "No detected link has been opened."
+            )
             if st.button(
                 "Scan another slip", icon=":material/restart_alt:", width="stretch"
             ):
@@ -259,7 +341,6 @@ def render_app(settings: Settings) -> None:
     elif state == WorkflowState.FAILED:
         with main_area.container():
             render_error(st.session_state.error_state)
-            render_progress(state, failed=True)
             st.write("")
             if st.button(
                 "Try again", type="primary", icon=":material/refresh:", width="stretch"

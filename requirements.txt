@@ -1,3 +1,7 @@
 streamlit>=1.52,<2
 python-dotenv>=1.0,<2
 Pillow>=10.0,<13
+ollama>=0.6,<1
+openai>=2.0,<3
+pydantic>=2.10,<3
+zxing-cpp>=2.3,<3

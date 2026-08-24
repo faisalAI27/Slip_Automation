@@ -25,7 +25,12 @@ class Settings:
     temp_dir: Path
     temp_file_max_age_hours: int
     max_upload_mb: int
-    mock_stage_delay_seconds: float
+    document_ai_provider: str
+    document_ai_model: str
+    document_ai_api_key: str | None
+    document_ai_timeout_seconds: float
+    ollama_base_url: str
+    ollama_timeout_seconds: float
     log_level: str
 
 
@@ -33,6 +38,7 @@ class Settings:
 def get_settings() -> Settings:
     raw_temp_dir = Path(os.getenv("TEMP_DIR", "temp"))
     temp_dir = raw_temp_dir if raw_temp_dir.is_absolute() else PROJECT_ROOT / raw_temp_dir
+    document_api_key = (os.getenv("DOCUMENT_AI_API_KEY") or "").strip() or None
 
     return Settings(
         app_env=os.getenv("APP_ENV", "development"),
@@ -40,6 +46,17 @@ def get_settings() -> Settings:
         temp_dir=temp_dir.resolve(),
         temp_file_max_age_hours=int(os.getenv("TEMP_FILE_MAX_AGE_HOURS", "24")),
         max_upload_mb=int(os.getenv("MAX_UPLOAD_MB", "12")),
-        mock_stage_delay_seconds=float(os.getenv("MOCK_STAGE_DELAY_SECONDS", "0.65")),
+        document_ai_provider=os.getenv("DOCUMENT_AI_PROVIDER", "ollama").strip(),
+        document_ai_model=os.getenv(
+            "DOCUMENT_AI_MODEL", "qwen3-vl:2b-instruct"
+        ).strip(),
+        document_ai_api_key=document_api_key,
+        document_ai_timeout_seconds=float(
+            os.getenv("DOCUMENT_AI_TIMEOUT_SECONDS", "90")
+        ),
+        ollama_base_url=os.getenv(
+            "OLLAMA_BASE_URL", "http://127.0.0.1:11434"
+        ).strip(),
+        ollama_timeout_seconds=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "420")),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
     )

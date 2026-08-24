@@ -1,4 +1,4 @@
-"""Streamlit entry point for the lab report retrieval foundation."""
+"""Streamlit entry point for Phase 2 document understanding."""
 
 from config.settings import get_settings
 from ui.main_page import render_app

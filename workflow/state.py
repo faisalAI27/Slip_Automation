@@ -28,9 +28,6 @@ class WorkflowUpdate:
 PROGRESS_STEPS: tuple[tuple[WorkflowState, str], ...] = (
     (WorkflowState.PROCESSING_DOCUMENT, "Reading your slip"),
     (WorkflowState.DOCUMENT_UNDERSTOOD, "Understanding the document"),
-    (WorkflowState.DISCOVERING_PORTAL, "Finding the report service"),
-    (WorkflowState.RETRIEVING_REPORT, "Retrieving your report"),
-    (WorkflowState.DOWNLOAD_READY, "Preparing the download"),
 )
 
 

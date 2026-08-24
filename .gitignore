@@ -23,3 +23,5 @@ venv/
 # Temporary medical documents and generated reports
 temp/*
 !temp/.gitkeep
+.agents/
+.claude/

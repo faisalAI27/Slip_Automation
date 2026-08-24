@@ -1,8 +1,6 @@
 """Reusable Streamlit presentation components."""
 
 from html import escape
-import mimetypes
-from pathlib import Path
 
 import streamlit as st
 
@@ -55,40 +53,16 @@ def render_progress(current_state: WorkflowState, failed: bool = False) -> None:
     )
 
 
-def render_result(file_path: Path) -> None:
-    st.html(
-        """
-        <section class="result-shell">
-          <div class="result-eyebrow">Ready</div>
-          <h2 class="result-title">Report Ready</h2>
-          <p class="result-copy">Your test file is ready to view or download.</p>
-          <div class="demo-badge"><strong>Demo only:</strong> This is a sample file for testing the interface. No real report was retrieved.</div>
-        </section>
-        """,
-    )
-
-    mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
-    st.download_button(
-        "Download report",
-        data=file_path.read_bytes(),
-        file_name="demo-lab-report.txt",
-        mime=mime_type,
-        type="primary",
-        icon=":material/download:",
-        width="stretch",
-    )
-    if st.button("View report", icon=":material/visibility:", width="stretch"):
-        st.session_state.show_report_preview = not st.session_state.get(
-            "show_report_preview", False
+def render_understanding_outcome(analysis_status: str) -> None:
+    if analysis_status == "not_medical":
+        st.warning(
+            "This doesn't appear to be a hospital or laboratory slip.",
+            icon=":material/document_scanner:",
         )
+        return
 
-    if st.session_state.get("show_report_preview", False):
-        st.text_area(
-            "Demo report preview",
-            value=file_path.read_text(encoding="utf-8"),
-            height=210,
-            disabled=True,
-        )
+    st.success("Slip understood", icon=":material/check_circle:")
+    st.caption("Scroll down to review the information extracted from your slip.")
 
 
 def render_error(message: str) -> None:
@@ -97,5 +71,5 @@ def render_error(message: str) -> None:
 
 def render_footer() -> None:
     st.html(
-        '<p class="footer-note">Step 1 demo · No medical processing is performed</p>',
+        '<p class="footer-note">Phase 2.1 · Extraction details enabled</p>',
     )
