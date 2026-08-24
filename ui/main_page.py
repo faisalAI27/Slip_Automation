@@ -662,6 +662,26 @@ def _render_safe_retrieval_summary(result: RetrievalResult) -> None:
             else "unclassified"
         )
         st.caption(f"Final website page: {final_page}.")
+        diagnostics = result.final_page_diagnostics
+        if diagnostics:
+            st.caption(
+                "Safe page check: "
+                f"{diagnostics.button_count} buttons, "
+                f"{diagnostics.link_count} links, "
+                f"{diagnostics.download_candidate_count} report-download candidates, "
+                f"and {diagnostics.embedded_resource_count} embedded resources."
+            )
+            if diagnostics.dated_report_candidate_count:
+                st.caption(
+                    f"Dated report options detected: "
+                    f"{diagnostics.dated_report_candidate_count}."
+                )
+            st.caption(
+                "Final response type: "
+                f"{diagnostics.document_media_type or 'not reported'}; "
+                "direct download detected: "
+                f"{'yes' if diagnostics.pending_download_detected else 'no'}."
+            )
         st.caption(
             "The private automation browser closes after every completed or stopped "
             "run. It does not close this app."
@@ -687,6 +707,18 @@ def _render_retrieval_input(settings: Settings) -> None:
             "The website did not expose a safe automatic next step. No extra "
             "information is requested because it would not help this run."
         )
+        if st.button(
+            "Try retrieval again",
+            type="primary",
+            icon=":material/refresh:",
+            width="stretch",
+        ):
+            st.session_state.retrieval_result = None
+            st.session_state.retrieval_choice = None
+            st.session_state.auto_retrieve_requested = True
+            st.session_state.processing_status = "Retrying report retrieval"
+            _set_state(WorkflowState.BROWSER_OBSERVATION_READY)
+            st.rerun()
         if st.button(
             "Scan another slip", icon=":material/restart_alt:", width="stretch"
         ):
@@ -752,7 +784,9 @@ def _render_retrieval_input(settings: Settings) -> None:
         _reset_run(settings)
 
 
-def _validated_report_bytes(settings: Settings) -> bytes | None:
+def _validated_report_payload(
+    settings: Settings,
+) -> tuple[bytes, str, str] | None:
     path_value = st.session_state.resulting_file_path
     if not path_value:
         return None
@@ -765,7 +799,13 @@ def _validated_report_bytes(settings: Settings) -> bytes | None:
         data = path.read_bytes()
     except OSError:
         return None
-    return data if data.startswith(b"%PDF") else None
+    if data.startswith(b"%PDF"):
+        return data, "application/pdf", "lab_report.pdf"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return data, "image/png", "lab_report.png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return data, "image/jpeg", "lab_report.jpg"
+    return None
 
 
 def _render_developer_details(settings: Settings) -> None:
@@ -836,16 +876,17 @@ def render_app(settings: Settings) -> None:
                     _reset_run(settings)
     elif state == WorkflowState.DOWNLOAD_READY:
         with main_area.container():
-            report_data = _validated_report_bytes(settings)
-            if report_data is None:
+            report_payload = _validated_report_payload(settings)
+            if report_payload is None:
                 render_error("The temporary report file is no longer available.")
             else:
+                report_data, report_mime, report_name = report_payload
                 render_download_ready()
                 st.download_button(
                     "Download report",
                     data=report_data,
-                    file_name="lab_report.pdf",
-                    mime="application/pdf",
+                    file_name=report_name,
+                    mime=report_mime,
                     type="primary",
                     icon=":material/download:",
                     on_click="ignore",
@@ -858,6 +899,18 @@ def render_app(settings: Settings) -> None:
     elif state == WorkflowState.VERIFICATION_REQUIRED:
         with main_area.container():
             render_verification_required()
+            if st.button(
+                "Try retrieval again",
+                type="primary",
+                icon=":material/refresh:",
+                width="stretch",
+            ):
+                st.session_state.retrieval_result = None
+                st.session_state.retrieval_choice = None
+                st.session_state.auto_retrieve_requested = True
+                st.session_state.processing_status = "Retrying report retrieval"
+                _set_state(WorkflowState.BROWSER_OBSERVATION_READY)
+                st.rerun()
             if st.button(
                 "Scan another slip", icon=":material/restart_alt:", width="stretch"
             ):

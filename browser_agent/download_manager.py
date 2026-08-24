@@ -11,6 +11,8 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 PDF_SIGNATURE = b"%PDF"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+JPEG_SIGNATURE = b"\xff\xd8\xff"
 
 
 class ReportDownloadManager:
@@ -22,10 +24,23 @@ class ReportDownloadManager:
     def temp_dir(self) -> Path:
         return self._temp_dir
 
+    @property
+    def max_bytes(self) -> int:
+        return self._max_bytes
+
     def staging_path(self) -> Path:
         return self._temp_dir / f"report-download-{uuid.uuid4().hex}.part"
 
     def validate_pdf(self, staged_path: Path) -> DownloadedFile:
+        result = self.validate_report(staged_path)
+        if result.media_type != "application/pdf":
+            self._remove_if_allowed(Path(result.path))
+            raise DownloadValidationError(
+                "The downloaded file is not a validated PDF report."
+            )
+        return result
+
+    def validate_report(self, staged_path: Path) -> DownloadedFile:
         resolved = staged_path.resolve()
         try:
             if resolved.parent != self._temp_dir or not resolved.is_file():
@@ -36,18 +51,27 @@ class ReportDownloadManager:
             if size > self._max_bytes:
                 raise DownloadValidationError("The downloaded report exceeds the size limit.")
             with resolved.open("rb") as handle:
-                signature = handle.read(len(PDF_SIGNATURE))
-            if signature != PDF_SIGNATURE:
+                signature = handle.read(len(PNG_SIGNATURE))
+            if signature.startswith(PDF_SIGNATURE):
+                extension = "pdf"
+                media_type = "application/pdf"
+            elif signature.startswith(PNG_SIGNATURE):
+                extension = "png"
+                media_type = "image/png"
+            elif signature.startswith(JPEG_SIGNATURE):
+                extension = "jpg"
+                media_type = "image/jpeg"
+            else:
                 raise DownloadValidationError(
-                    "The downloaded file is not a validated PDF report."
+                    "The downloaded file is not a validated PDF or image report."
                 )
 
-            final_path = self._temp_dir / f"lab_report_{uuid.uuid4().hex}.pdf"
+            final_path = self._temp_dir / f"lab_report_{uuid.uuid4().hex}.{extension}"
             resolved.replace(final_path)
             logger.info("Controlled report download validated")
             return DownloadedFile(
                 path=str(final_path),
-                media_type="application/pdf",
+                media_type=media_type,
                 size_bytes=size,
                 validation_status="validated",
             )

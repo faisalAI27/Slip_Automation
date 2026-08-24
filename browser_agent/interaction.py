@@ -17,11 +17,15 @@ from browser_agent.inspector import PageInspector
 from browser_agent.models import (
     AgentAction,
     AgentActionType,
+    AuthenticationSignals,
     BrowserObservation,
     ButtonSemanticAction,
+    DownloadCandidate,
+    DownloadCandidateKind,
     DownloadedFile,
     HtmlInputType,
     LinkPurpose,
+    PageType,
     SearchObservation,
     SearchResult,
 )
@@ -307,7 +311,88 @@ class ControlledBrowserTools:
         return self.inspect_page()
 
     def inspect_page(self) -> BrowserObservation:
-        return self._inspector.inspect(self._session.page)
+        observation = self._inspector.inspect(self._session.page)
+        media_type = self._session.current_document_media_type
+        file_type = {
+            "application/pdf": "pdf",
+            "image/png": "png",
+            "image/jpeg": "jpeg",
+            "image/jpg": "jpeg",
+        }.get(media_type or "")
+        pending_download = self._session.has_pending_report_download
+        if not file_type and pending_download:
+            file_type = self._session.pending_report_file_type
+        if (not file_type and not pending_download) or any(
+            item.kind == DownloadCandidateKind.CURRENT_DOCUMENT
+            for item in observation.download_candidates
+        ):
+            updated = observation.model_copy(
+                update={
+                    "document_media_type": media_type,
+                    "pending_download_detected": pending_download,
+                }
+            )
+            has_direct_report = any(
+                item.likely_file_type in {"pdf", "png", "jpeg"}
+                or item.kind
+                in {
+                    DownloadCandidateKind.EMBEDDED_RESOURCE,
+                    DownloadCandidateKind.CURRENT_DOCUMENT,
+                }
+                for item in updated.download_candidates
+            )
+            if (
+                updated.page_type == PageType.REPORT_VIEWER
+                and media_type in {None, "text/html", "application/xhtml+xml"}
+                and not has_direct_report
+                and not any(
+                    item.kind == DownloadCandidateKind.PRINTABLE_PAGE
+                    for item in updated.download_candidates
+                )
+            ):
+                printable = DownloadCandidate(
+                    element_id="printable_page_1",
+                    label="Printable PDF report",
+                    kind=DownloadCandidateKind.PRINTABLE_PAGE,
+                    likely_file_type="pdf",
+                    confidence=ConfidenceLevel.HIGH,
+                )
+                return updated.model_copy(
+                    update={
+                        "download_candidates": [
+                            *updated.download_candidates,
+                            printable,
+                        ]
+                    }
+                )
+            return updated
+        candidate = DownloadCandidate(
+            element_id="page_1",
+            label=(
+                f"Current {file_type.upper()} report"
+                if file_type
+                else "Current report download"
+            ),
+            kind=DownloadCandidateKind.CURRENT_DOCUMENT,
+            likely_file_type=file_type,
+            confidence=ConfidenceLevel.HIGH,
+        )
+        return observation.model_copy(
+            update={
+                "page_type": PageType.REPORT_VIEWER,
+                "document_media_type": media_type,
+                "pending_download_detected": pending_download,
+                "authentication_signals": AuthenticationSignals(
+                    authentication_required=False,
+                    field_count=0,
+                    confidence=ConfidenceLevel.LOW,
+                ),
+                "download_candidates": [
+                    *observation.download_candidates,
+                    candidate,
+                ],
+            }
+        )
 
     def fill_field(self, action: AgentAction, observation: BrowserObservation) -> None:
         self._validator.validate_fill(
@@ -367,7 +452,7 @@ class ControlledBrowserTools:
     def wait(self, action: AgentAction) -> BrowserObservation:
         if action.type != AgentActionType.WAIT or action.wait_seconds is None:
             raise InteractionSafetyError("Only a structured bounded wait is permitted.")
-        self._session.wait(action.wait_seconds)
+        self._session.wait(action.wait_seconds, capture_report_events=True)
         return self.inspect_page()
 
     def go_back(self, action: AgentAction) -> BrowserObservation:
@@ -392,5 +477,51 @@ class ControlledBrowserTools:
             )
         assert action.element_id
         staged = self._download_manager.staging_path()
-        self._session.capture_download(action.element_id, staged)
-        return self._download_manager.validate_pdf(staged)
+        try:
+            self._session.capture_report(
+                action.element_id,
+                staged,
+                allowed_domains=self._trusted_domains,
+                max_bytes=self._download_manager.max_bytes,
+            )
+        except ElementUnavailableError:
+            original = next(
+                item
+                for item in observation.download_candidates
+                if item.element_id == action.element_id
+            )
+            refreshed = self.inspect_page()
+            matching = [
+                item
+                for item in refreshed.download_candidates
+                if (
+                    item.label,
+                    item.kind,
+                    item.likely_file_type,
+                    item.report_date,
+                )
+                == (
+                    original.label,
+                    original.kind,
+                    original.likely_file_type,
+                    original.report_date,
+                )
+            ]
+            if len(matching) != 1:
+                raise InteractionSafetyError(
+                    "The selected report action changed before it could be captured."
+                )
+            retry_action = action.model_copy(
+                update={"element_id": matching[0].element_id}
+            )
+            self._validator.validate_download(retry_action, refreshed)
+            self._warnings.append(
+                "The selected report action changed and was safely re-inspected once."
+            )
+            self._session.capture_report(
+                matching[0].element_id,
+                staged,
+                allowed_domains=self._trusted_domains,
+                max_bytes=self._download_manager.max_bytes,
+            )
+        return self._download_manager.validate_report(staged)

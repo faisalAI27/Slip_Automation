@@ -4,6 +4,9 @@
 # clicks elements, downloads files, or executes page-provided instructions.
 PAGE_SNAPSHOT_SCRIPT = r"""
 () => {
+  document.querySelectorAll("[data-slip-ref]").forEach((element) => {
+    element.removeAttribute("data-slip-ref");
+  });
   const clean = (value) => {
     if (value === null || value === undefined) return null;
     const text = String(value).replace(/\s+/g, " ").trim();
@@ -22,6 +25,12 @@ PAGE_SNAPSHOT_SCRIPT = r"""
     }
     const parentLabel = element.closest("label");
     return parentLabel ? clean(parentLabel.innerText) : null;
+  };
+  const actionContext = (element) => {
+    const container = element.closest(
+      'tr, [role="row"], li, .report-row, .result-row, .report-card, .result-card'
+    );
+    return container ? clean(container.innerText) : null;
   };
 
   const forms = Array.from(document.querySelectorAll("form"))
@@ -80,6 +89,7 @@ PAGE_SNAPSHOT_SCRIPT = r"""
         type: clean(element.getAttribute("type") || element.getAttribute("role")),
         disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
         formRef: element.form ? clean(element.form.getAttribute("data-slip-ref")) : null,
+        context: actionContext(element),
       };
     });
 
@@ -92,6 +102,42 @@ PAGE_SNAPSHOT_SCRIPT = r"""
         ref,
         text: clean(element.innerText || element.getAttribute("aria-label") || element.getAttribute("title")),
         url: clean(element.href),
+        context: actionContext(element),
+      };
+    });
+
+  const resources = Array.from(
+    document.querySelectorAll('embed[src], object[data], iframe[src], img[src]')
+  )
+    .filter(visible)
+    .map((element) => {
+      const tag = element.tagName.toLowerCase();
+      const url = clean(
+        tag === "object" ? element.data : element.getAttribute("src")
+      );
+      const mime = clean(element.getAttribute("type"));
+      const context = clean(
+        `${element.getAttribute("title") || ""} ${element.getAttribute("aria-label") || ""} ${element.getAttribute("alt") || ""} ${actionContext(element) || ""}`
+      );
+      const combined = `${url || ""} ${mime || ""} ${context || ""}`.toLowerCase();
+      const pdfLike = /(?:\.pdf(?:[?#]|$)|application\/pdf)/i.test(combined);
+      const imageLike = /(?:\.png(?:[?#]|$)|\.jpe?g(?:[?#]|$)|image\/(?:png|jpe?g))/i.test(combined)
+        && /(?:report|result|laboratory)/i.test(combined);
+      if (!pdfLike && !imageLike) {
+        return null;
+      }
+      return { element, tag, url, mime, context };
+    })
+    .filter(Boolean)
+    .map((resource, index) => {
+      const ref = `resource_${index + 1}`;
+      resource.element.setAttribute("data-slip-ref", ref);
+      return {
+        ref,
+        tag: resource.tag,
+        url: resource.url,
+        mime: resource.mime,
+        context: resource.context,
       };
     });
 
@@ -111,6 +157,7 @@ PAGE_SNAPSHOT_SCRIPT = r"""
     '[id*="captcha" i], [class*="captcha" i], iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], [data-sitekey]'
   )).filter(visible).length;
   const iframeHints = Array.from(document.querySelectorAll("iframe"))
+    .filter(visible)
     .map((frame) => clean(`${frame.title || ""} ${frame.name || ""} ${frame.src || ""}`))
     .filter(Boolean);
   const main = document.querySelector("main, [role=main]") || document.body;
@@ -120,6 +167,7 @@ PAGE_SNAPSHOT_SCRIPT = r"""
     inputs,
     buttons,
     links,
+    resources,
     messages,
     captchaNodes,
     iframeHints,

@@ -43,6 +43,32 @@ class DownloadManagerTests(unittest.TestCase):
 
             self.assertFalse(staged.exists())
 
+    def test_png_report_is_validated_with_safe_name_and_media_type(self) -> None:
+        with TemporaryDirectory() as directory:
+            manager = ReportDownloadManager(Path(directory), max_download_mb=1)
+            staged = manager.staging_path()
+            staged.write_bytes(b"\x89PNG\r\n\x1a\nsynthetic report")
+
+            result = manager.validate_report(staged)
+
+            final = Path(result.path)
+            self.assertTrue(final.exists())
+            self.assertEqual(final.suffix, ".png")
+            self.assertEqual(result.media_type, "image/png")
+
+    def test_jpeg_report_is_validated_with_safe_name_and_media_type(self) -> None:
+        with TemporaryDirectory() as directory:
+            manager = ReportDownloadManager(Path(directory), max_download_mb=1)
+            staged = manager.staging_path()
+            staged.write_bytes(b"\xff\xd8\xffsynthetic report")
+
+            result = manager.validate_report(staged)
+
+            final = Path(result.path)
+            self.assertTrue(final.exists())
+            self.assertEqual(final.suffix, ".jpg")
+            self.assertEqual(result.media_type, "image/jpeg")
+
 
 if __name__ == "__main__":
     unittest.main()

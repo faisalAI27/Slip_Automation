@@ -87,6 +87,26 @@ def _verification_result() -> RetrievalResult:
     )
 
 
+def _stopped_retrieval_result() -> RetrievalResult:
+    return RetrievalResult(
+        status=RetrievalStatus.USER_INPUT_REQUIRED,
+        downloaded_file=None,
+        final_page_type=PageType.UNKNOWN,
+        current_domain="example.test",
+        steps_completed=4,
+        user_input_requirement=RetrievalUserInputRequirement(
+            required=True,
+            reason="The next report-retrieval step could not be determined safely.",
+            requested_information=[],
+            choices=[],
+        ),
+        warnings=[],
+        failure_reason="The report resource could not be captured safely.",
+        safe_action_history=[],
+        field_mappings=[],
+    )
+
+
 class UserInterfaceTests(unittest.TestCase):
     def test_css_does_not_override_streamlit_icon_fonts(self) -> None:
         self.assertNotIn('[class*="st-"]', APP_CSS)
@@ -104,6 +124,35 @@ class UserInterfaceTests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual(len(app.get("file_uploader")), 0)
         self.assertEqual(len(app.get("camera_input")), 1)
+
+    def test_verification_screen_offers_retry_without_rescanning(self) -> None:
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        app = AppTest.from_file(app_path)
+        app.session_state["workflow_state"] = WorkflowState.VERIFICATION_REQUIRED
+
+        app.run(timeout=15)
+
+        self.assertFalse(app.exception)
+        self.assertEqual(
+            [button.label for button in app.button],
+            ["Try retrieval again", "Scan another slip"],
+        )
+
+    def test_stopped_retrieval_offers_retry_without_rescanning(self) -> None:
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        app = AppTest.from_file(app_path)
+        app.session_state["workflow_state"] = WorkflowState.USER_INPUT_REQUIRED
+        app.session_state["retrieval_result"] = _stopped_retrieval_result().model_dump(
+            mode="json"
+        )
+
+        app.run(timeout=15)
+
+        self.assertFalse(app.exception)
+        self.assertEqual(
+            [button.label for button in app.button],
+            ["Try retrieval again", "Scan another slip"],
+        )
 
     def test_phase_four_runs_automatically_after_document_understanding(self) -> None:
         app_path = Path(__file__).resolve().parents[1] / "app.py"
@@ -177,6 +226,28 @@ class UserInterfaceTests(unittest.TestCase):
             self.assertIn("Your report is ready.", [item.value for item in app.success])
             self.assertEqual(len(app.get("download_button")), 1)
             self.assertEqual(app.get("download_button")[0].label, "Download report")
+        finally:
+            report_path.unlink(missing_ok=True)
+
+    def test_validated_png_is_exposed_as_download_report(self) -> None:
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        settings = get_settings()
+        settings.temp_dir.mkdir(parents=True, exist_ok=True)
+        report_path = settings.temp_dir / "lab_report_ui_test.png"
+        report_path.write_bytes(b"\x89PNG\r\n\x1a\nsynthetic test report")
+        try:
+            app = AppTest.from_file(app_path)
+            app.session_state["workflow_state"] = WorkflowState.DOWNLOAD_READY
+            app.session_state["resulting_file_path"] = str(report_path)
+
+            app.run(timeout=15)
+
+            self.assertFalse(app.exception)
+            self.assertEqual(len(app.get("download_button")), 1)
+            self.assertEqual(
+                app.get("download_button")[0].label,
+                "Download report",
+            )
         finally:
             report_path.unlink(missing_ok=True)
 

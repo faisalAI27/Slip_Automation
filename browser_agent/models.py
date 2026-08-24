@@ -1,5 +1,6 @@
 """Strict structured models produced by controlled Phase 4 execution."""
 
+from datetime import date
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -63,6 +64,9 @@ class DownloadCandidateKind(str, Enum):
     LINK = "link"
     BUTTON = "button"
     REPORT_ROW = "report_row"
+    EMBEDDED_RESOURCE = "embedded_resource"
+    CURRENT_DOCUMENT = "current_document"
+    PRINTABLE_PAGE = "printable_page"
 
 
 class FormObservation(StrictBrowserModel):
@@ -93,6 +97,7 @@ class ButtonObservation(StrictBrowserModel):
     disabled: bool
     semantic_action: ButtonSemanticAction
     form_reference: str | None = None
+    report_date: date | None = None
 
 
 class LinkObservation(StrictBrowserModel):
@@ -102,6 +107,7 @@ class LinkObservation(StrictBrowserModel):
     domain: str | None = None
     same_domain: bool
     likely_purpose: LinkPurpose
+    report_date: date | None = None
 
 
 class DownloadCandidate(StrictBrowserModel):
@@ -110,6 +116,7 @@ class DownloadCandidate(StrictBrowserModel):
     kind: DownloadCandidateKind
     likely_file_type: str | None = None
     confidence: ConfidenceLevel
+    report_date: date | None = None
 
 
 class AuthenticationSignals(StrictBrowserModel):
@@ -157,6 +164,9 @@ class BrowserObservation(StrictBrowserModel):
     buttons: list[ButtonObservation]
     links: list[LinkObservation]
     download_candidates: list[DownloadCandidate]
+    embedded_resource_count: int = Field(default=0, ge=0)
+    document_media_type: str | None = None
+    pending_download_detected: bool = False
     authentication_signals: AuthenticationSignals
     verification_signals: VerificationSignals
     errors_or_messages: list[str]
@@ -331,6 +341,22 @@ class DownloadedFile(StrictBrowserModel):
     validation_status: str = "validated"
 
 
+class SafePageDiagnostics(StrictBrowserModel):
+    page_type: PageType
+    form_count: int = Field(ge=0)
+    input_count: int = Field(ge=0)
+    button_count: int = Field(ge=0)
+    link_count: int = Field(ge=0)
+    download_candidate_count: int = Field(ge=0)
+    embedded_resource_count: int = Field(ge=0)
+    dated_report_candidate_count: int = Field(ge=0)
+    authentication_required: bool
+    verification_required: bool
+    relevant_message_count: int = Field(ge=0)
+    document_media_type: str | None = None
+    pending_download_detected: bool = False
+
+
 class RetrievalResult(StrictBrowserModel):
     status: RetrievalStatus
     downloaded_file: DownloadedFile | None = None
@@ -342,6 +368,7 @@ class RetrievalResult(StrictBrowserModel):
     failure_reason: str | None = None
     safe_action_history: list[SafeActionRecord]
     field_mappings: list[FieldMatch]
+    final_page_diagnostics: SafePageDiagnostics | None = None
 
     @model_validator(mode="after")
     def validate_retrieval_result(self) -> "RetrievalResult":

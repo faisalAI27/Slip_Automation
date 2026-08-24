@@ -60,6 +60,7 @@ class Settings:
     interaction_ai_provider: str
     interaction_ai_model: str
     portal_url_overrides: dict[str, str]
+    portal_https_host_rewrites: dict[str, str]
     log_level: str
 
 
@@ -116,6 +117,9 @@ def get_settings() -> Settings:
         interaction_ai_model=os.getenv("INTERACTION_AI_MODEL", "").strip(),
         portal_url_overrides=_as_url_overrides(
             os.getenv("PORTAL_URL_OVERRIDES_JSON")
+        ),
+        portal_https_host_rewrites=_as_url_overrides(
+            os.getenv("PORTAL_HTTPS_HOST_REWRITES_JSON")
         ),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
     )

@@ -10,6 +10,7 @@ def _snapshot() -> dict[str, object]:
         "inputs": [],
         "buttons": [],
         "links": [],
+        "resources": [],
         "messages": [],
         "captchaNodes": 0,
         "iframeHints": [],
@@ -135,6 +136,9 @@ class BrowserInspectorTests(unittest.TestCase):
             }
         ]
         snapshot["captchaNodes"] = 0
+        snapshot["iframeHints"] = [
+            "reCAPTCHA challenge hidden inside account recovery modal"
+        ]
         snapshot["visibleText"] = "Sign In"
 
         observation = self.inspector.from_snapshot(
@@ -213,6 +217,98 @@ class BrowserInspectorTests(unittest.TestCase):
         self.assertEqual(len(observation.download_candidates), 1)
         self.assertEqual(observation.download_candidates[0].element_id, "link_1")
         self.assertNotIn("private", observation.links[0].url)
+
+    def test_report_row_context_classifies_view_action_and_extracts_date(self) -> None:
+        snapshot = _snapshot()
+        snapshot["buttons"] = [
+            {
+                "ref": "button_1",
+                "text": "View",
+                "type": "button",
+                "disabled": False,
+                "context": "Laboratory report 24-Aug-2026 View",
+            }
+        ]
+        snapshot["visibleText"] = "Laboratory reports"
+
+        observation = self.inspector.from_snapshot(
+            snapshot,
+            final_url="https://example.test/reports",
+            page_title="Reports",
+        )
+
+        self.assertEqual(
+            observation.buttons[0].semantic_action,
+            ButtonSemanticAction.VIEW_REPORT,
+        )
+        self.assertEqual(
+            observation.buttons[0].report_date.isoformat(),
+            "2026-08-24",
+        )
+        self.assertEqual(observation.download_candidates, [])
+
+    def test_goodhealth_view_link_is_navigation_with_comma_date(self) -> None:
+        snapshot = _snapshot()
+        snapshot["links"] = [
+            {
+                "ref": "link_1",
+                "text": "View Report",
+                "url": "https://reports.example.test/report/view/123",
+                "context": "18 Aug,2026 Culture & Sensitivity View Report",
+            }
+        ]
+        snapshot["visibleText"] = "Patient Medical Record Latest Reports"
+
+        observation = self.inspector.from_snapshot(
+            snapshot,
+            final_url="https://reports.example.test/records",
+            page_title="Patient Medical Record",
+        )
+
+        self.assertEqual(observation.page_type, PageType.REPORT_LIST_PAGE)
+        self.assertEqual(observation.links[0].report_date.isoformat(), "2026-08-18")
+        self.assertEqual(observation.download_candidates, [])
+
+    def test_html_laboratory_report_is_classified_as_viewer(self) -> None:
+        snapshot = _snapshot()
+        snapshot["visibleText"] = (
+            "Laboratory Report\nTest result\nReference range\nValidated result"
+        )
+
+        observation = self.inspector.from_snapshot(
+            snapshot,
+            final_url="https://reports.example.test/report/view/123",
+            page_title="Laboratory report",
+        )
+
+        self.assertEqual(observation.page_type, PageType.REPORT_VIEWER)
+
+    def test_embedded_pdf_becomes_high_confidence_download_candidate(self) -> None:
+        snapshot = _snapshot()
+        snapshot["resources"] = [
+            {
+                "ref": "resource_1",
+                "tag": "iframe",
+                "url": "https://example.test/private/report.pdf?token=secret",
+                "mime": "application/pdf",
+                "context": "Report dated 2026-08-24",
+            }
+        ]
+        snapshot["visibleText"] = "Report viewer"
+
+        observation = self.inspector.from_snapshot(
+            snapshot,
+            final_url="https://example.test/viewer",
+            page_title="Report viewer",
+        )
+
+        self.assertEqual(observation.page_type, PageType.REPORT_VIEWER)
+        self.assertEqual(observation.embedded_resource_count, 1)
+        self.assertEqual(len(observation.download_candidates), 1)
+        candidate = observation.download_candidates[0]
+        self.assertEqual(candidate.element_id, "resource_1")
+        self.assertEqual(candidate.likely_file_type, "pdf")
+        self.assertNotIn("secret", candidate.model_dump_json())
 
 
 if __name__ == "__main__":

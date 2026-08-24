@@ -107,6 +107,9 @@ def render_verification_required() -> None:
         "For your safety, the app stopped and did not try to solve a CAPTCHA, "
         "enter a one-time code, or bypass verification."
     )
+    st.caption(
+        "If no verification challenge was visible, try retrieval again once."
+    )
 
 
 def render_report_not_found() -> None:

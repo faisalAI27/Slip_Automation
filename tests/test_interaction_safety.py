@@ -1,14 +1,18 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from browser_agent.download_manager import ReportDownloadManager
 from browser_agent.errors import InteractionSafetyError
 from browser_agent.field_matcher import DocumentFieldStore
-from browser_agent.interaction import InteractionSafetyValidator
+from browser_agent.interaction import ControlledBrowserTools, InteractionSafetyValidator
 from browser_agent.models import (
     AgentAction,
     AgentActionType,
     AuthenticationSignals,
     BrowserObservation,
+    DownloadCandidateKind,
     FormObservation,
     HtmlInputType,
     InputFieldObservation,
@@ -146,6 +150,78 @@ class InteractionSafetyTests(unittest.TestCase):
                 current_url="https://reports.example.test/login",
                 trusted_domains={"example.test"},
             )
+
+    def test_current_pdf_response_becomes_download_candidate(self) -> None:
+        class MediaSession:
+            page = object()
+            current_document_media_type = "application/pdf"
+            has_pending_report_download = False
+            pending_report_file_type = None
+
+        class Inspector:
+            def inspect(self, _page: object) -> BrowserObservation:
+                return _observation()
+
+        with TemporaryDirectory() as directory:
+            tools = ControlledBrowserTools(
+                MediaSession(),  # type: ignore[arg-type]
+                _store(),
+                ReportDownloadManager(Path(directory)),
+                inspector=Inspector(),  # type: ignore[arg-type]
+            )
+
+            observation = tools.inspect_page()
+
+        self.assertEqual(observation.page_type, PageType.REPORT_VIEWER)
+        self.assertFalse(observation.authentication_signals.authentication_required)
+        self.assertEqual(observation.document_media_type, "application/pdf")
+        self.assertFalse(observation.pending_download_detected)
+        self.assertEqual(len(observation.download_candidates), 1)
+        self.assertEqual(observation.download_candidates[0].element_id, "page_1")
+        self.assertEqual(
+            observation.download_candidates[0].kind,
+            DownloadCandidateKind.CURRENT_DOCUMENT,
+        )
+
+    def test_html_report_viewer_becomes_printable_pdf_candidate(self) -> None:
+        class HtmlSession:
+            page = object()
+            current_document_media_type = "text/html"
+            has_pending_report_download = False
+            pending_report_file_type = None
+
+        class Inspector:
+            def inspect(self, _page: object) -> BrowserObservation:
+                return _observation().model_copy(
+                    update={
+                        "page_type": PageType.REPORT_VIEWER,
+                        "authentication_signals": AuthenticationSignals(
+                            authentication_required=False,
+                            field_count=0,
+                            confidence=ConfidenceLevel.LOW,
+                        ),
+                    }
+                )
+
+        with TemporaryDirectory() as directory:
+            tools = ControlledBrowserTools(
+                HtmlSession(),  # type: ignore[arg-type]
+                _store(),
+                ReportDownloadManager(Path(directory)),
+                inspector=Inspector(),  # type: ignore[arg-type]
+            )
+
+            observation = tools.inspect_page()
+
+        self.assertEqual(len(observation.download_candidates), 1)
+        self.assertEqual(
+            observation.download_candidates[0].kind,
+            DownloadCandidateKind.PRINTABLE_PAGE,
+        )
+        self.assertEqual(
+            observation.download_candidates[0].element_id,
+            "printable_page_1",
+        )
 
 
 if __name__ == "__main__":

@@ -21,14 +21,15 @@ from browser_agent.models import (
     ButtonSemanticAction,
     ConfidenceLevel,
     DownloadCandidate,
+    DownloadCandidateKind,
     FieldMatch,
-    LinkObservation,
     LinkPurpose,
     PageType,
     RetrievalChoice,
     RetrievalResult,
     RetrievalStatus,
     RetrievalUserInputRequirement,
+    SafePageDiagnostics,
     SafeActionRecord,
     SearchObservation,
     UserProvidedField,
@@ -91,6 +92,7 @@ class RetrievalAgent:
             headless=settings.browser_headless,
             timeout_seconds=settings.browser_timeout_seconds,
             navigation_timeout_seconds=settings.browser_navigation_timeout_seconds,
+            navigation_url_rewrites=settings.portal_https_host_rewrites,
         )
 
         def create_tools(field_store: DocumentFieldStore) -> ControlledBrowserTools:
@@ -426,6 +428,30 @@ class RetrievalAgent:
                             update={"outcome": "completed"}
                         )
                         filled_inputs.clear()
+                        if (
+                            observation.page_type == PageType.UNKNOWN
+                            and post_authentication_waits == 0
+                            and self._config.max_wait_seconds > 0
+                        ):
+                            wait_seconds = min(2.0, self._config.max_wait_seconds)
+                            wait_action = AgentAction(
+                                type=AgentActionType.WAIT,
+                                wait_seconds=wait_seconds,
+                                reason=(
+                                    "Allow the authenticated report page to finish "
+                                    "loading."
+                                ),
+                                confidence=ConfidenceLevel.HIGH,
+                            )
+                            observation = tools.wait(wait_action)
+                            steps += 1
+                            post_authentication_waits += 1
+                            self._record(
+                                history,
+                                steps,
+                                wait_action,
+                                tools.current_domain,
+                            )
                         continue
 
                     download, download_ambiguous = self._download_candidate(
@@ -475,6 +501,7 @@ class RetrievalAgent:
                             failure_reason=None,
                             safe_action_history=history,
                             field_mappings=mappings,
+                            final_page_diagnostics=self._diagnostics(observation),
                         )
 
                     next_element, ambiguous_navigation = self._navigation_element(
@@ -682,6 +709,10 @@ class RetrievalAgent:
             for item in observation.download_candidates
             if item.likely_file_type == "pdf"
             or (
+                item.kind == DownloadCandidateKind.EMBEDDED_RESOURCE
+                and item.likely_file_type in {"png", "jpeg"}
+            )
+            or (
                 recognized_report_page
                 and any(
                     term in item.label.casefold()
@@ -693,22 +724,43 @@ class RetrievalAgent:
                 and any(term in item.label.casefold() for term in ("download", "save"))
             )
         ]
-        download_all = [
+        direct_files = [
             item
             for item in explicit
-            if "all" in item.label.casefold()
-            and ("report" in item.label.casefold() or "result" in item.label.casefold())
+            if item.likely_file_type in {"pdf", "png", "jpeg"}
+            and item.kind != DownloadCandidateKind.PRINTABLE_PAGE
         ]
+        printable = [
+            item
+            for item in explicit
+            if item.kind == DownloadCandidateKind.PRINTABLE_PAGE
+        ]
+        if not direct_files and len(printable) == 1:
+            return printable[0], False
         if selected_choice:
             selected = next(
                 (item for item in explicit if item.element_id == selected_choice), None
             )
             if selected is not None:
                 return selected, False
-        if len(download_all) == 1:
-            return download_all[0], False
         if len(explicit) == 1:
             return explicit[0], False
+        individual = [
+            item
+            for item in explicit
+            if not (
+                "all" in item.label.casefold()
+                and any(
+                    term in item.label.casefold() for term in ("report", "result")
+                )
+            )
+        ]
+        candidates = individual or explicit
+        if len(candidates) == 1:
+            return candidates[0], False
+        latest = RetrievalAgent._unique_latest(candidates)
+        if latest is not None:
+            return latest, False
         return (None, len(explicit) > 1)
 
     @staticmethod
@@ -718,14 +770,14 @@ class RetrievalAgent:
         selected_choice: str | None = None,
     ) -> tuple[str | None, bool]:
         buttons = [
-            item.element_id
+            item
             for item in observation.buttons
             if not item.disabled
             and item.semantic_action
             in {ButtonSemanticAction.VIEW_REPORT, ButtonSemanticAction.CONTINUE}
         ]
         links = [
-            item.element_id
+            item
             for item in observation.links
             if item.likely_purpose
             in {
@@ -735,12 +787,30 @@ class RetrievalAgent:
                 LinkPurpose.LOGIN,
             }
         ]
-        candidates = list(dict.fromkeys([*buttons, *links]))
-        if selected_choice in candidates:
+        candidates = [*buttons, *links]
+        candidate_refs = list(dict.fromkeys(item.element_id for item in candidates))
+        if selected_choice in candidate_refs:
             return selected_choice, False
-        if len(candidates) == 1:
-            return candidates[0], False
-        return None, len(candidates) > 1
+        if len(candidate_refs) == 1:
+            return candidate_refs[0], False
+        latest = RetrievalAgent._unique_latest(candidates)
+        if latest is not None:
+            return latest.element_id, False
+        return None, len(candidate_refs) > 1
+
+    @staticmethod
+    def _unique_latest(candidates: list[object]):
+        if len(candidates) < 2 or not all(
+            getattr(item, "report_date", None) is not None for item in candidates
+        ):
+            return None
+        latest_date = max(getattr(item, "report_date") for item in candidates)
+        latest = [
+            item
+            for item in candidates
+            if getattr(item, "report_date", None) == latest_date
+        ]
+        return latest[0] if len(latest) == 1 else None
 
     @staticmethod
     def _navigation_choices(
@@ -748,7 +818,11 @@ class RetrievalAgent:
     ) -> list[RetrievalChoice]:
         choices = [
             RetrievalChoice(
-                label=item.text or "Continue report retrieval",
+                label=(
+                    f"{item.text or 'Continue report retrieval'} · {item.report_date.isoformat()}"
+                    if item.report_date
+                    else item.text or "Continue report retrieval"
+                ),
                 value=item.element_id,
             )
             for item in observation.buttons
@@ -758,7 +832,11 @@ class RetrievalAgent:
         ]
         choices.extend(
             RetrievalChoice(
-                label=item.text or item.domain or "Open report service",
+                label=(
+                    f"{item.text or item.domain or 'Open report service'} · {item.report_date.isoformat()}"
+                    if item.report_date
+                    else item.text or item.domain or "Open report service"
+                ),
                 value=item.element_id,
             )
             for item in observation.links
@@ -899,4 +977,38 @@ class RetrievalAgent:
             failure_reason=reason,
             safe_action_history=history,
             field_mappings=mappings,
+            final_page_diagnostics=(
+                RetrievalAgent._diagnostics(observation) if observation else None
+            ),
+        )
+
+    @staticmethod
+    def _diagnostics(observation: BrowserObservation) -> SafePageDiagnostics:
+        dated_refs = {
+            item.element_id
+            for item in [
+                *observation.buttons,
+                *observation.links,
+                *observation.download_candidates,
+            ]
+            if item.report_date is not None
+        }
+        return SafePageDiagnostics(
+            page_type=observation.page_type,
+            form_count=len(observation.forms),
+            input_count=len(observation.input_fields),
+            button_count=len(observation.buttons),
+            link_count=len(observation.links),
+            download_candidate_count=len(observation.download_candidates),
+            embedded_resource_count=observation.embedded_resource_count,
+            dated_report_candidate_count=len(dated_refs),
+            authentication_required=(
+                observation.authentication_signals.authentication_required
+            ),
+            verification_required=(
+                observation.verification_signals.verification_required
+            ),
+            relevant_message_count=len(observation.errors_or_messages),
+            document_media_type=observation.document_media_type,
+            pending_download_detected=observation.pending_download_detected,
         )

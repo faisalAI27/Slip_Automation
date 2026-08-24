@@ -1,8 +1,8 @@
 # Get My Lab Report — Phase 5
 
-This Streamlit app accepts a hospital or laboratory slip image, turns it into a validated semantic representation, builds a deterministic retrieval plan, and uses one bounded private browser session to retrieve a validated PDF report when the portal supports safe automation. Local development uses Ollama and Playwright Chromium, so no API key or API subscription is required.
+This Streamlit app accepts a hospital or laboratory slip image, turns it into a validated semantic representation, builds a deterministic retrieval plan, and uses one bounded private browser session to retrieve a validated PDF or image report when the portal supports safe automation. Local development uses Ollama and Playwright Chromium, so no API key or API subscription is required.
 
-> **Current status:** Phases 1–4 upload, understand, plan, and observe. Phase 5 continues from `BROWSER_OBSERVATION_READY`, semantically maps document fields to observed website fields, performs at most one authentication submission, and captures only an explicitly selected PDF download. CAPTCHA, OTP, ambiguous choices, missing fields, unsafe domains, and unsupported portal designs cause a controlled stop.
+> **Current status:** Phases 1–4 upload, understand, plan, and observe. Phase 5 continues from `BROWSER_OBSERVATION_READY`, semantically maps document fields to observed website fields, performs at most one authentication submission, and captures only a validated PDF or image report. One report is selected automatically; when every available report has a date, the unique latest report is selected. CAPTCHA, OTP, tied or undated choices, missing fields, unsafe domains, and unsupported portal designs cause a controlled stop.
 
 This application is intended only for retrieving reports that the user or patient is authorized to access. It does not bypass portal authorization or verification controls.
 
@@ -76,10 +76,11 @@ Environment access is centralized in `config/settings.py`.
 | `AGENT_MAX_NAVIGATIONS` | `6` | Maximum page-changing actions in one retrieval run |
 | `AGENT_MAX_FORM_SUBMISSIONS` | `2` | Hard configuration ceiling; authentication is still limited to one attempt |
 | `AGENT_MAX_WAIT_SECONDS` | `8` | Maximum configured bounded wait |
-| `MAX_REPORT_DOWNLOAD_MB` | `25` | Maximum accepted report PDF size |
+| `MAX_REPORT_DOWNLOAD_MB` | `25` | Maximum accepted PDF or image report size |
 | `INTERACTION_AI_PROVIDER` | `deterministic` | Reserved optional interaction-reasoning provider; V1 uses deterministic rules |
 | `INTERACTION_AI_MODEL` | empty | Reserved optional local interaction model |
 | `PORTAL_URL_OVERRIDES_JSON` | `{}` | Optional administrator-managed obsolete-host to verified HTTPS portal mapping |
+| `PORTAL_HTTPS_HOST_REWRITES_JSON` | `{}` | Optional HTTP portal hostname to verified HTTPS origin mapping for safe redirects |
 
 Ollama mode does not read or require `DOCUMENT_AI_API_KEY`. If Ollama is stopped, the app asks the developer to start it. If the configured model has not been downloaded, Developer Mode shows the safe configuration reason.
 
@@ -100,7 +101,7 @@ DOCUMENT_AI_API_KEY=your_api_key_here
 5. Phase 2 analyzes the temporary image locally and Phase 3 immediately creates a plan.
 6. For `READY` or `SEARCH_REQUIRED`, Phase 4 safely observes the public report service.
 7. Phase 5 restarts one private browser session, uses high-confidence semantic mappings, submits authentication at most once, and observes again after every page-changing action.
-8. A valid PDF produces **Your report is ready** and a **Download report** button. Missing fields, multiple plausible reports, CAPTCHA, OTP, unsafe HTTP forms, and unknown credential destinations stop safely.
+8. A single valid report—or the unique latest dated report—produces **Your report is ready** and a **Download report** button. Missing fields, tied or undated choices, CAPTCHA, OTP, unsafe HTTP forms, and unknown credential destinations stop safely.
 9. In Developer details, review the sanitized agent status, action history, field mappings, observations, and download validation metadata. Values and the local report path are omitted.
 
 Useful manual cases:
@@ -119,7 +120,7 @@ source .venv/bin/activate
 python -m unittest discover -s tests -v
 ```
 
-The automated browser tests use mocks and synthetic semantic snapshots rather than live medical portals. They cover earlier phases plus semantic field matching, HTTP and cross-domain credential blocking, one-time authentication, CAPTCHA/OTP handoff, search ranking, ambiguous reports, prompt-injection text, hallucinated references, loop and step limits, popup/download controls, PDF signature/size checks, sensitive logging, Streamlit state transitions, and session cleanup.
+The automated browser tests use mocks and synthetic semantic snapshots rather than live medical portals. They cover earlier phases plus semantic field matching, HTTP and cross-domain credential blocking, one-time authentication, CAPTCHA/OTP handoff, search ranking, latest-report selection, ambiguous reports, embedded resources, prompt-injection text, hallucinated references, loop and step limits, popup/download controls, PDF/image signature and size checks, sensitive logging, Streamlit state transitions, and session cleanup.
 
 ## Architecture
 
@@ -160,7 +161,7 @@ The automated browser tests use mocks and synthetic semantic snapshots rather th
 │   ├── agent.py                     # Bounded observe-decide-validate-act loop
 │   ├── interaction.py               # Trusted Phase 5 tool execution and ranking
 │   ├── field_matcher.py             # Organization-independent semantic mapping
-│   ├── download_manager.py          # Generated filenames and PDF validation
+│   ├── download_manager.py          # Generated filenames and report-file validation
 │   ├── tools.py                     # Explicit Phase 4 and Phase 5 allowlists
 │   └── errors.py                    # Controlled browser error taxonomy
 ├── utils/                           # Temporary-file and privacy-safe logging helpers
@@ -193,8 +194,9 @@ If an organization has retired a URL that remains printed on its slips, an admin
 
 ```env
 PORTAL_URL_OVERRIDES_JSON={"old-reports.hospital.example":"https://reports.hospital.example/login"}
+PORTAL_HTTPS_HOST_REWRITES_JSON={"legacy-reports.hospital.example":"https://reports.hospital.example"}
 ```
 
-The destination still passes the normal public-address, HTTPS, form-action, and element safety checks. Configure an override only after independently verifying the destination's ownership and TLS certificate.
+The destinations still pass the normal public-address, HTTPS, form-action, and element safety checks. The host rewrite preserves the requested path and query, blocks the HTTP request, and continues with a fresh GET on the configured HTTPS origin. It never replays a credential-bearing POST. Configure either mapping only after independently verifying the destination's ownership and TLS certificate.
 
-Generated report files use names such as `lab_report_<random-id>.pdf`; remote filenames, patient names, identifiers, and access codes are never used. Invalid, oversized, or non-PDF downloads are deleted. The current run's report and image are removed when **Scan another slip** is selected, and stale files are removed at application startup.
+Generated report files use names such as `lab_report_<random-id>.pdf`; remote filenames, patient names, identifiers, and access codes are never used. Invalid, oversized, or unsupported downloads are deleted. Validated PDF, PNG, and JPEG reports are supported. The current run's report and image are removed when **Scan another slip** is selected, and stale files are removed at application startup.

@@ -1,6 +1,7 @@
 """Compact semantic webpage inspection with deterministic classification."""
 
 from collections.abc import Mapping
+from datetime import date, datetime
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -57,13 +58,56 @@ def _input_type(value: object) -> HtmlInputType:
         return HtmlInputType.OTHER
 
 
-def _button_action(text: object, html_type: object) -> ButtonSemanticAction:
-    combined = _combined_text(text, html_type)
+def _report_date(*values: object) -> date | None:
+    combined = " ".join(str(value or "") for value in values)
+    found: list[date] = []
+    patterns = (
+        (r"\b(20\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01]))\b", ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d")),
+        (r"\b((?:0?[1-9]|[12]\d|3[01])[-/.](?:0?[1-9]|1[0-2])[-/.](?:19|20)\d{2})\b", ("%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y")),
+        (
+            r"\b((?:0?[1-9]|[12]\d|3[01])\s+[A-Za-z]{3,9},?\s*(?:19|20)\d{2})\b",
+            ("%d %b %Y", "%d %B %Y", "%d %b,%Y", "%d %B,%Y", "%d %b, %Y", "%d %B, %Y"),
+        ),
+        (r"\b((?:0?[1-9]|[12]\d|3[01])[-/.][A-Za-z]{3,9}[-/.](?:19|20)\d{2})\b", ("%d-%b-%Y", "%d-%B-%Y", "%d/%b/%Y", "%d/%B/%Y", "%d.%b.%Y", "%d.%B.%Y")),
+        (r"\b([A-Za-z]{3,9}\s+(?:0?[1-9]|[12]\d|3[01]),?\s+(?:19|20)\d{2})\b", ("%b %d, %Y", "%B %d, %Y", "%b %d %Y", "%B %d %Y")),
+    )
+    for pattern, formats in patterns:
+        for match in re.finditer(pattern, combined, flags=re.IGNORECASE):
+            value = match.group(1)
+            for format_value in formats:
+                try:
+                    found.append(datetime.strptime(value, format_value).date())
+                    break
+                except ValueError:
+                    continue
+    return max(found) if found else None
+
+
+def _likely_file_type(*values: object) -> str | None:
+    combined = _combined_text(*values)
+    if "application/pdf" in combined or re.search(r"\.pdf(?:[?#]|$)", combined):
+        return "pdf"
+    if "image/png" in combined or re.search(r"\.png(?:[?#]|$)", combined):
+        return "png"
+    if any(term in combined for term in ("image/jpeg", "image/jpg")) or re.search(
+        r"\.jpe?g(?:[?#]|$)", combined
+    ):
+        return "jpeg"
+    return None
+
+
+def _button_action(text: object, html_type: object, context: object = None) -> ButtonSemanticAction:
+    combined = _combined_text(text, html_type, context)
+    text_only = _combined_text(text)
     if any(term in combined for term in ("slide", "carousel", "slideshow")):
         return ButtonSemanticAction.UNKNOWN
-    if any(term in combined for term in ("download", "pdf", "save report")):
+    if any(term in text_only for term in ("download", "pdf", "save", "print")):
         return ButtonSemanticAction.DOWNLOAD
     if any(term in combined for term in ("view report", "view result", "show report")):
+        return ButtonSemanticAction.VIEW_REPORT
+    if text_only in {"view", "preview", "open"} and any(
+        term in combined for term in ("report", "result", "test", "investigation", "laboratory")
+    ):
         return ButtonSemanticAction.VIEW_REPORT
     if any(term in combined for term in ("sign in", "log in", "login")):
         return ButtonSemanticAction.LOGIN
@@ -76,9 +120,10 @@ def _button_action(text: object, html_type: object) -> ButtonSemanticAction:
     return ButtonSemanticAction.UNKNOWN
 
 
-def _link_purpose(text: object, url: object) -> LinkPurpose:
-    combined = _combined_text(text, url)
-    if any(term in combined for term in ("download", ".pdf", "save report")):
+def _link_purpose(text: object, url: object, context: object = None) -> LinkPurpose:
+    combined = _combined_text(text, url, context)
+    text_only = _combined_text(text)
+    if any(term in combined for term in ("download", ".pdf", ".png", ".jpg", ".jpeg", "save report")):
         return LinkPurpose.DOWNLOAD
     if any(term in combined for term in ("patient portal", "patient login")):
         return LinkPurpose.PATIENT_PORTAL
@@ -86,6 +131,10 @@ def _link_purpose(text: object, url: object) -> LinkPurpose:
         return LinkPurpose.REPORTS
     if any(term in combined for term in ("result", "results")):
         return LinkPurpose.RESULTS
+    if text_only in {"view", "preview", "open"} and any(
+        term in combined for term in ("report", "result", "test", "investigation", "laboratory")
+    ):
+        return LinkPurpose.REPORTS
     if any(term in combined for term in ("login", "log in", "sign in")):
         return LinkPurpose.LOGIN
     if any(term in combined for term in ("support", "help", "contact")):
@@ -159,11 +208,7 @@ def _verification_signals(
         )
         for field in inputs
     )
-    page_text = _combined_text(
-        summary,
-        input_text,
-        " ".join(str(value) for value in snapshot.get("iframeHints") or []),
-    )
+    page_text = _combined_text(summary, input_text)
     otp_detected = any(
         term in page_text
         for term in (
@@ -174,6 +219,9 @@ def _verification_signals(
             "otp",
         )
     )
+    # `captchaNodes` is already visibility-filtered by the DOM snapshot. Do not
+    # infer a challenge from hidden iframe metadata: some portals keep a
+    # reCAPTCHA inside a closed account-recovery modal on the normal login page.
     captcha_detected = bool(snapshot.get("captchaNodes")) or any(
         term in page_text for term in ("captcha", "recaptcha", "hcaptcha")
     )
@@ -262,6 +310,7 @@ def _page_type(
     authentication: AuthenticationSignals,
     verification: VerificationSignals,
     downloads: list[DownloadCandidate],
+    buttons: list[ButtonObservation],
     links: list[LinkObservation],
     messages: list[str],
 ) -> PageType:
@@ -278,13 +327,29 @@ def _page_type(
         return PageType.ERROR_PAGE
     if authentication.authentication_required:
         return PageType.REPORT_LOGIN_PAGE
-    if downloads and any(term in combined for term in ("report", "result", "pdf")):
-        return PageType.REPORT_VIEWER
+    if any(
+        button.semantic_action == ButtonSemanticAction.VIEW_REPORT
+        for button in buttons
+    ) and any(term in combined for term in ("report", "result", "laboratory")):
+        return PageType.REPORT_LIST_PAGE
     if any(
         link.likely_purpose in {LinkPurpose.REPORTS, LinkPurpose.RESULTS}
         for link in links
     ) and any(term in combined for term in ("reports", "results")):
         return PageType.REPORT_LIST_PAGE
+    if downloads and any(term in combined for term in ("report", "result", "pdf")):
+        return PageType.REPORT_VIEWER
+    if any(
+        term in combined
+        for term in (
+            "laboratory report",
+            "lab report",
+            "test result",
+            "reference range",
+            "investigation report",
+        )
+    ):
+        return PageType.REPORT_VIEWER
     if any(term in combined for term in ("patient portal", "patient services")):
         return PageType.PATIENT_PORTAL
     if any(term in combined for term in ("hospital", "laboratory", "diagnostic", "clinic")):
@@ -380,8 +445,11 @@ class PageInspector:
                     text=_clean_text(raw.get("text")),
                     html_type=_clean_text(raw.get("type")),
                     disabled=bool(raw.get("disabled")),
-                    semantic_action=_button_action(raw.get("text"), raw.get("type")),
+                    semantic_action=_button_action(
+                        raw.get("text"), raw.get("type"), raw.get("context")
+                    ),
                     form_reference=_clean_text(raw.get("formRef")),
+                    report_date=_report_date(raw.get("context"), raw.get("text")),
                 )
             )
 
@@ -398,7 +466,7 @@ class PageInspector:
             if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname:
                 continue
             link_domain = registrable_domain(parsed.hostname.casefold())
-            purpose = _link_purpose(text, raw_url)
+            purpose = _link_purpose(text, raw_url, raw.get("context"))
             if not text and purpose == LinkPurpose.UNKNOWN:
                 continue
             links.append(
@@ -409,6 +477,7 @@ class PageInspector:
                     domain=link_domain,
                     same_domain=bool(final_domain and link_domain == final_domain),
                     likely_purpose=purpose,
+                    report_date=_report_date(raw.get("context"), text),
                 )
             )
 
@@ -416,26 +485,24 @@ class PageInspector:
         for link in links:
             combined = _combined_text(link.text, link.url)
             if link.likely_purpose == LinkPurpose.DOWNLOAD or any(
-                term in combined for term in (".pdf", "download", "view report")
+                term in combined for term in (".pdf", "download", "save report")
             ):
                 downloads.append(
                     DownloadCandidate(
                         element_id=link.element_id,
                         label=link.text or "Possible report download",
-                        kind=DownloadCandidateKind.LINK,
-                        likely_file_type="pdf" if ".pdf" in combined else None,
-                        confidence=(
-                            ConfidenceLevel.HIGH
-                            if ".pdf" in combined or "download" in combined
-                            else ConfidenceLevel.MEDIUM
-                        ),
-                    )
+                    kind=DownloadCandidateKind.LINK,
+                    likely_file_type=_likely_file_type(combined),
+                    confidence=(
+                        ConfidenceLevel.HIGH
+                        if _likely_file_type(combined) or "download" in combined
+                        else ConfidenceLevel.MEDIUM
+                    ),
+                    report_date=link.report_date,
                 )
+            )
         for button in buttons:
-            if button.semantic_action in {
-                ButtonSemanticAction.DOWNLOAD,
-                ButtonSemanticAction.VIEW_REPORT,
-            }:
+            if button.semantic_action == ButtonSemanticAction.DOWNLOAD:
                 downloads.append(
                     DownloadCandidate(
                         element_id=button.element_id,
@@ -447,8 +514,38 @@ class PageInspector:
                             else None
                         ),
                         confidence=ConfidenceLevel.MEDIUM,
+                        report_date=button.report_date,
                     )
                 )
+
+        resources = [
+            raw
+            for raw in list(snapshot.get("resources") or [])[:MAX_LINKS]
+            if isinstance(raw, Mapping)
+        ]
+        for raw in resources:
+            ref = _clean_text(raw.get("ref"))
+            raw_url = _clean_text(raw.get("url"), limit=2_000)
+            file_type = _likely_file_type(raw_url, raw.get("mime"))
+            if not ref or not raw_url or not file_type:
+                continue
+            parsed = urlsplit(raw_url)
+            if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname:
+                continue
+            report_date = _report_date(raw.get("context"))
+            label = f"Embedded {file_type.upper()} report"
+            if report_date:
+                label = f"{label} dated {report_date.isoformat()}"
+            downloads.append(
+                DownloadCandidate(
+                    element_id=ref,
+                    label=label,
+                    kind=DownloadCandidateKind.EMBEDDED_RESOURCE,
+                    likely_file_type=file_type,
+                    confidence=ConfidenceLevel.HIGH,
+                    report_date=report_date,
+                )
+            )
 
         summary = _visible_summary(snapshot.get("visibleText"))
         messages = _page_messages(snapshot, summary)
@@ -461,6 +558,7 @@ class PageInspector:
             authentication=authentication,
             verification=verification,
             downloads=downloads,
+            buttons=buttons,
             links=links,
             messages=messages,
         )
@@ -482,6 +580,7 @@ class PageInspector:
             buttons=buttons,
             links=links,
             download_candidates=downloads,
+            embedded_resource_count=len(resources),
             authentication_signals=authentication,
             verification_signals=verification,
             errors_or_messages=messages,

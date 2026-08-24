@@ -108,13 +108,18 @@ def _login(messages: list[str] | None = None) -> BrowserObservation:
     )
 
 
-def _download(label: str = "Download PDF", ref: str = "link_1"):
+def _download(
+    label: str = "Download PDF",
+    ref: str = "link_1",
+    report_date: str | None = None,
+):
     return DownloadCandidate(
         element_id=ref,
         label=label,
         kind=DownloadCandidateKind.LINK,
         likely_file_type="pdf",
         confidence=ConfidenceLevel.HIGH,
+        report_date=report_date,
     )
 
 
@@ -306,6 +311,31 @@ class RetrievalAgentTests(unittest.TestCase):
             ["open_url", "fill_field", "fill_field", "click", "wait", "download"],
         )
 
+    def test_transient_post_login_candidates_are_ignored_until_page_loads(self) -> None:
+        tools = FakeTools(
+            [
+                _login(),
+                _observation(
+                    PageType.UNKNOWN,
+                    summary="Loading reports",
+                    downloads=[
+                        _download("Temporary report action", "link_1"),
+                        _download("Temporary report action", "link_2"),
+                    ],
+                ),
+                _observation(
+                    PageType.REPORT_LIST_PAGE,
+                    downloads=[_download("Latest report", "link_3")],
+                ),
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
+        self.assertEqual(tools.waits, [2.0])
+        self.assertEqual(tools.downloads, ["link_3"])
+
     def test_missing_required_field_requests_only_needed_input(self) -> None:
         tools = FakeTools(
             [
@@ -325,7 +355,7 @@ class RetrievalAgentTests(unittest.TestCase):
             ["Date of Birth"],
         )
 
-    def test_download_all_is_preferred_over_individual_reports(self) -> None:
+    def test_individual_report_is_preferred_over_download_all(self) -> None:
         tools = FakeTools(
             [
                 _observation(
@@ -341,7 +371,110 @@ class RetrievalAgentTests(unittest.TestCase):
         result = self._run(tools)
 
         self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
-        self.assertEqual(tools.downloads, ["button_2"])
+        self.assertEqual(tools.downloads, ["link_1"])
+
+    def test_latest_dated_report_is_downloaded_automatically(self) -> None:
+        tools = FakeTools(
+            [
+                _observation(
+                    PageType.REPORT_LIST_PAGE,
+                    downloads=[
+                        _download("Download report", "link_1", "2025-10-02"),
+                        _download("Download report", "link_2", "2026-08-24"),
+                        _download("Download report", "link_3", "2026-01-10"),
+                    ],
+                )
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
+        self.assertEqual(tools.downloads, ["link_2"])
+
+    def test_tied_latest_reports_are_not_guessed(self) -> None:
+        tools = FakeTools(
+            [
+                _observation(
+                    PageType.REPORT_LIST_PAGE,
+                    downloads=[
+                        _download("Download report A", "link_1", "2026-08-24"),
+                        _download("Download report B", "link_2", "2026-08-24"),
+                    ],
+                )
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.AMBIGUOUS)
+        self.assertEqual(tools.downloads, [])
+
+    def test_latest_dated_report_view_is_opened_automatically(self) -> None:
+        tools = FakeTools(
+            [
+                _observation(
+                    PageType.REPORT_LIST_PAGE,
+                    buttons=[
+                        ButtonObservation(
+                            element_id="button_1",
+                            text="View",
+                            html_type="button",
+                            disabled=False,
+                            semantic_action=ButtonSemanticAction.VIEW_REPORT,
+                            report_date="2025-08-24",
+                        ),
+                        ButtonObservation(
+                            element_id="button_2",
+                            text="View",
+                            html_type="button",
+                            disabled=False,
+                            semantic_action=ButtonSemanticAction.VIEW_REPORT,
+                            report_date="2026-08-24",
+                        ),
+                    ],
+                ),
+                _observation(
+                    PageType.REPORT_VIEWER,
+                    downloads=[_download()],
+                ),
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
+        self.assertEqual(tools.clicks, ["button_2"])
+        self.assertEqual(tools.downloads, ["link_1"])
+
+    def test_printable_html_report_is_saved_without_clicking_print_button(self) -> None:
+        printable = DownloadCandidate(
+            element_id="printable_page_1",
+            label="Printable PDF report",
+            kind=DownloadCandidateKind.PRINTABLE_PAGE,
+            likely_file_type="pdf",
+            confidence=ConfidenceLevel.HIGH,
+        )
+        print_button = DownloadCandidate(
+            element_id="button_1",
+            label="Print",
+            kind=DownloadCandidateKind.BUTTON,
+            likely_file_type=None,
+            confidence=ConfidenceLevel.MEDIUM,
+        )
+        tools = FakeTools(
+            [
+                _observation(
+                    PageType.REPORT_VIEWER,
+                    downloads=[print_button, printable],
+                )
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
+        self.assertEqual(tools.downloads, ["printable_page_1"])
 
     def test_multiple_individual_downloads_require_a_choice(self) -> None:
         tools = FakeTools(
@@ -376,6 +509,9 @@ class RetrievalAgentTests(unittest.TestCase):
 
         self.assertEqual(result.status, RetrievalStatus.AMBIGUOUS)
         self.assertEqual(tools.clicks, [])
+        self.assertIsNotNone(result.final_page_diagnostics)
+        self.assertEqual(result.final_page_diagnostics.page_type, PageType.UNKNOWN)
+        self.assertEqual(result.final_page_diagnostics.download_candidate_count, 0)
 
     def test_generic_download_on_unknown_page_is_not_a_report_candidate(self) -> None:
         generic = DownloadCandidate(
