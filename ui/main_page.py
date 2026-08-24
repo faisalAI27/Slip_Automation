@@ -8,7 +8,12 @@ import streamlit as st
 
 from browser_agent.agent import RetrievalAgent
 from browser_agent.executor import BrowserExecutor
-from browser_agent.models import RetrievalResult, RetrievalStatus, UserProvidedField
+from browser_agent.models import (
+    AgentActionType,
+    RetrievalResult,
+    RetrievalStatus,
+    UserProvidedField,
+)
 from config.settings import Settings
 from document_understanding.models import AnalysisStatus, DocumentUnderstandingResult
 from document_understanding.provider import (
@@ -632,6 +637,37 @@ def _is_sensitive_label(label: str) -> bool:
     )
 
 
+def _render_safe_retrieval_summary(result: RetrievalResult) -> None:
+    """Explain a stopped run without exposing document or credential values."""
+    action_types = [item.action_type for item in result.safe_action_history]
+    fill_count = action_types.count(AgentActionType.FILL_FIELD)
+    login_attempted = bool(result.field_mappings) and AgentActionType.CLICK in action_types
+
+    with st.container(border=True):
+        st.markdown("**What happened**")
+        if AgentActionType.OPEN_URL in action_types:
+            st.write(":material/check_circle: The report website was opened.")
+        if fill_count:
+            st.write(
+                f":material/check_circle: {fill_count} report-access "
+                f"field{'s were' if fill_count != 1 else ' was'} matched and filled."
+            )
+        if login_attempted:
+            st.write(":material/check_circle: The login action was attempted once.")
+        if AgentActionType.WAIT in action_types:
+            st.write(":material/check_circle: The changed page was checked again.")
+        final_page = (
+            result.final_page_type.value.replace("_", " ")
+            if result.final_page_type
+            else "unclassified"
+        )
+        st.caption(f"Final website page: {final_page}.")
+        st.caption(
+            "The private automation browser closes after every completed or stopped "
+            "run. It does not close this app."
+        )
+
+
 def _render_retrieval_input(settings: Settings) -> None:
     result_data = st.session_state.retrieval_result
     if not result_data:
@@ -646,6 +682,7 @@ def _render_retrieval_input(settings: Settings) -> None:
     st.caption("Only the information needed by the report website is requested.")
 
     if not requirement.choices and not requirement.requested_information:
+        _render_safe_retrieval_summary(result)
         st.caption(
             "The website did not expose a safe automatic next step. No extra "
             "information is requested because it would not help this run."

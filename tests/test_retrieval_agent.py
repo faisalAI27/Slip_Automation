@@ -152,6 +152,7 @@ class FakeTools:
         self.fills: list[tuple[str, str]] = []
         self.clicks: list[str] = []
         self.downloads: list[str] = []
+        self.waits: list[float] = []
         self.closed = False
         self.opened_url: str | None = None
 
@@ -188,6 +189,11 @@ class FakeTools:
 
     def click(self, action, _observation: BrowserObservation) -> BrowserObservation:
         self.clicks.append(action.element_id)
+        self.index = min(self.index + 1, len(self.observations) - 1)
+        return self.observations[self.index]
+
+    def wait(self, action) -> BrowserObservation:
+        self.waits.append(action.wait_seconds)
         self.index = min(self.index + 1, len(self.observations) - 1)
         return self.observations[self.index]
 
@@ -276,6 +282,29 @@ class RetrievalAgentTests(unittest.TestCase):
         self.assertEqual(tools.clicks, ["button_1"])
         self.assertEqual(result.safe_action_history[-1].action_type.value, "click")
         self.assertEqual(result.safe_action_history[-1].outcome, "attempted")
+
+    def test_unknown_post_login_page_is_reinspected_after_one_bounded_wait(self) -> None:
+        tools = FakeTools(
+            [
+                _login(),
+                _observation(PageType.UNKNOWN, summary="Loading reports"),
+                _observation(
+                    PageType.REPORT_LIST_PAGE,
+                    downloads=[_download()],
+                ),
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
+        self.assertEqual(tools.clicks, ["button_1"])
+        self.assertEqual(tools.waits, [2.0])
+        self.assertEqual(tools.downloads, ["link_1"])
+        self.assertEqual(
+            [item.action_type.value for item in result.safe_action_history],
+            ["open_url", "fill_field", "fill_field", "click", "wait", "download"],
+        )
 
     def test_missing_required_field_requests_only_needed_input(self) -> None:
         tools = FakeTools(

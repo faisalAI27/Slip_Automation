@@ -132,6 +132,7 @@ class RetrievalAgent:
         steps = 0
         navigations = 0
         authentication_submissions = 0
+        post_authentication_waits = 0
         filled_inputs: set[str] = set()
         loop_counts: dict[tuple[str, str | None, str | None, str | None], int] = {}
         observation: BrowserObservation | None = None
@@ -529,6 +530,23 @@ class RetrievalAgent:
                             mappings=mappings,
                             reason="No validated PDF report action was available.",
                         )
+                    if (
+                        authentication_submissions > 0
+                        and post_authentication_waits == 0
+                        and self._config.max_wait_seconds > 0
+                    ):
+                        wait_seconds = min(2.0, self._config.max_wait_seconds)
+                        action = AgentAction(
+                            type=AgentActionType.WAIT,
+                            wait_seconds=wait_seconds,
+                            reason="Allow the authenticated report page to finish loading.",
+                            confidence=ConfidenceLevel.HIGH,
+                        )
+                        observation = tools.wait(action)
+                        steps += 1
+                        post_authentication_waits += 1
+                        self._record(history, steps, action, tools.current_domain)
+                        continue
                     return self._result(
                         RetrievalStatus.AMBIGUOUS,
                         observation=observation,
