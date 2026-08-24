@@ -82,7 +82,7 @@ def render_plan_outcome(planning_status: str) -> None:
 
 def render_browser_outcome() -> None:
     st.success("Report service found.", icon=":material/check_circle:")
-    st.caption("The next phase will complete the report retrieval.")
+    st.caption("The report service is ready for controlled retrieval.")
 
 
 def render_user_input_required() -> None:
@@ -93,11 +93,35 @@ def render_user_input_required() -> None:
     st.caption("Try a clearer, complete photo that includes the organization header.")
 
 
+def render_download_ready() -> None:
+    st.success("Your report is ready.", icon=":material/check_circle:")
+    st.caption("Download it below. The temporary copy is removed when you start over.")
+
+
+def render_verification_required() -> None:
+    st.warning(
+        "The report website requires a verification step.",
+        icon=":material/verified_user:",
+    )
+    st.caption(
+        "For your safety, the app stopped and did not try to solve a CAPTCHA, "
+        "enter a one-time code, or bypass verification."
+    )
+
+
+def render_report_not_found() -> None:
+    st.warning("No downloadable report was found.", icon=":material/search_off:")
+    st.caption(
+        "The website may not have published the report yet, or it may require a "
+        "different report-access route."
+    )
+
+
 def render_error(message: str) -> None:
     st.error(message, icon=":material/error:")
 
 
 def render_footer() -> None:
     st.html(
-        '<p class="footer-note">Phase 4 · Controlled webpage observation</p>',
+        '<p class="footer-note">Phase 5 · Controlled report retrieval</p>',
     )

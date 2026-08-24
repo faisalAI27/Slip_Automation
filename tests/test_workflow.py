@@ -4,7 +4,7 @@ from workflow.state import PROGRESS_STEPS, WorkflowState, step_index
 
 
 class WorkflowTests(unittest.TestCase):
-    def test_phase_four_progress_stops_after_browser_observation(self) -> None:
+    def test_phase_five_progress_includes_report_retrieval(self) -> None:
         self.assertEqual(
             [state for state, _ in PROGRESS_STEPS],
             [
@@ -12,6 +12,7 @@ class WorkflowTests(unittest.TestCase):
                 WorkflowState.DOCUMENT_UNDERSTOOD,
                 WorkflowState.DISCOVERING_PORTAL,
                 WorkflowState.NAVIGATING_PORTAL,
+                WorkflowState.RETRIEVING_REPORT,
             ],
         )
 
@@ -19,7 +20,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(step_index(WorkflowState.COMPLETED), len(PROGRESS_STEPS))
 
     def test_plan_ready_precedes_browser_navigation(self) -> None:
-        self.assertEqual(step_index(WorkflowState.PLAN_READY), len(PROGRESS_STEPS) - 1)
+        self.assertEqual(
+            step_index(WorkflowState.PLAN_READY),
+            [state for state, _ in PROGRESS_STEPS].index(
+                WorkflowState.NAVIGATING_PORTAL
+            ),
+        )
 
     def test_browser_observation_ready_marks_declared_steps_done(self) -> None:
         self.assertEqual(

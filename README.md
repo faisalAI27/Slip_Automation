@@ -1,10 +1,10 @@
-# Get My Lab Report — Phase 4
+# Get My Lab Report — Phase 5
 
-This Streamlit app accepts a hospital or laboratory slip image, turns it into a validated semantic representation, builds one deterministic next-step plan, and performs one controlled browser action. Local development uses Ollama and Playwright Chromium, so no API key or API subscription is required.
+This Streamlit app accepts a hospital or laboratory slip image, turns it into a validated semantic representation, builds a deterministic retrieval plan, and uses one bounded private browser session to retrieve a validated PDF report when the portal supports safe automation. Local development uses Ollama and Playwright Chromium, so no API key or API subscription is required.
 
-> **Current status:** Phase 2 understands the document. Phase 3 creates one validated action. For actionable plans only, Phase 4 opens the public URL or performs one organization-only DuckDuckGo search, converts the resulting page into a structured `BrowserObservation`, and stops at `BROWSER_OBSERVATION_READY`.
+> **Current status:** Phases 1–4 upload, understand, plan, and observe. Phase 5 continues from `BROWSER_OBSERVATION_READY`, semantically maps document fields to observed website fields, performs at most one authentication submission, and captures only an explicitly selected PDF download. CAPTCHA, OTP, ambiguous choices, missing fields, unsafe domains, and unsupported portal designs cause a controlled stop.
 
-Phase 4 never fills fields, submits forms, clicks report actions, follows search results, solves CAPTCHA, enters OTP, or downloads reports. Those actions belong to Phase 5.
+This application is intended only for retrieving reports that the user or patient is authorized to access. It does not bypass portal authorization or verification controls.
 
 ## Run locally on macOS
 
@@ -72,6 +72,14 @@ Environment access is centralized in `config/settings.py`.
 | `BROWSER_TIMEOUT_SECONDS` | `30` | General browser/inspection timeout |
 | `BROWSER_NAVIGATION_TIMEOUT_SECONDS` | `45` | Maximum initial navigation wait |
 | `BROWSER_MAX_SEARCH_RESULTS` | `8` | Maximum structured DuckDuckGo results, capped at 10 |
+| `AGENT_MAX_STEPS` | `12` | Maximum controlled actions in one retrieval run |
+| `AGENT_MAX_NAVIGATIONS` | `6` | Maximum page-changing actions in one retrieval run |
+| `AGENT_MAX_FORM_SUBMISSIONS` | `2` | Hard configuration ceiling; authentication is still limited to one attempt |
+| `AGENT_MAX_WAIT_SECONDS` | `8` | Maximum configured bounded wait |
+| `MAX_REPORT_DOWNLOAD_MB` | `25` | Maximum accepted report PDF size |
+| `INTERACTION_AI_PROVIDER` | `deterministic` | Reserved optional interaction-reasoning provider; V1 uses deterministic rules |
+| `INTERACTION_AI_MODEL` | empty | Reserved optional local interaction model |
+| `PORTAL_URL_OVERRIDES_JSON` | `{}` | Optional administrator-managed obsolete-host to verified HTTPS portal mapping |
 
 Ollama mode does not read or require `DOCUMENT_AI_API_KEY`. If Ollama is stopped, the app asks the developer to start it. If the configured model has not been downloaded, Developer Mode shows the safe configuration reason.
 
@@ -83,16 +91,17 @@ DOCUMENT_AI_MODEL=gpt-5.6-terra
 DOCUMENT_AI_API_KEY=your_api_key_here
 ```
 
-## Test the complete Phase 4 flow
+## Test the complete Phase 5 flow
 
 1. Run `open -a Ollama` and confirm `ollama list` contains `qwen3-vl:4b-instruct`. The smaller `qwen3-vl:2b-instruct` remains an optional faster fallback, but it is less reliable for small printed URLs.
 2. Optionally set `DEBUG_MODE=true` to inspect structured output locally.
 3. Start the app and upload a clear JPG or PNG containing the whole slip.
 4. Select **Get report**. The first request can be slower while the model loads into memory.
 5. Phase 2 analyzes the temporary image locally and Phase 3 immediately creates a plan.
-6. For `READY` or `SEARCH_REQUIRED`, Phase 4 automatically opens or searches for the public report service, inspects it once, then stops without interacting with forms.
-7. The normal view shows **Report service found** when a structured observation is ready.
-8. In Developer details, review the understanding result, Workflow Plan, Browser Execution, and Page/Search Observation.
+6. For `READY` or `SEARCH_REQUIRED`, Phase 4 safely observes the public report service.
+7. Phase 5 restarts one private browser session, uses high-confidence semantic mappings, submits authentication at most once, and observes again after every page-changing action.
+8. A valid PDF produces **Your report is ready** and a **Download report** button. Missing fields, multiple plausible reports, CAPTCHA, OTP, unsafe HTTP forms, and unknown credential destinations stop safely.
+9. In Developer details, review the sanitized agent status, action history, field mappings, observations, and download validation metadata. Values and the local report path are omitted.
 
 Useful manual cases:
 
@@ -110,7 +119,7 @@ source .venv/bin/activate
 python -m unittest discover -s tests -v
 ```
 
-The automated browser tests use mocks and synthetic semantic snapshots rather than live medical portals. They cover public URL validation, unsafe schemes, local/private destinations, private DNS resolution, unsafe redirects, search privacy, login-page inspection, OTP/CAPTCHA detection, download candidates, unsupported plans, controlled browser failures, and session cleanup.
+The automated browser tests use mocks and synthetic semantic snapshots rather than live medical portals. They cover earlier phases plus semantic field matching, HTTP and cross-domain credential blocking, one-time authentication, CAPTCHA/OTP handoff, search ranking, ambiguous reports, prompt-injection text, hallucinated references, loop and step limits, popup/download controls, PDF signature/size checks, sensitive logging, Streamlit state transitions, and session cleanup.
 
 ## Architecture
 
@@ -139,7 +148,7 @@ The automated browser tests use mocks and synthetic semantic snapshots rather th
 │   ├── rules.py                     # Deterministic candidate and priority rules
 │   ├── validation.py                # URL, deduplication, privacy, and plan checks
 │   ├── planner.py                   # Phase 3 orchestration
-│   └── state.py                     # Workflow states through browser observation
+│   └── state.py                     # Workflow states through validated download
 ├── browser_agent/
 │   ├── models.py                    # Strict execution and observation models
 │   ├── safety.py                    # Scheme, DNS, private-network, redirect safety
@@ -148,9 +157,12 @@ The automated browser tests use mocks and synthetic semantic snapshots rather th
 │   ├── selectors.py                 # Static value-free semantic snapshot script
 │   ├── inspector.py                 # Compact deterministic page understanding
 │   ├── executor.py                  # Single-action Phase 4 orchestration
-│   ├── tools.py                     # Phase 4 allowlist and future tool contracts
+│   ├── agent.py                     # Bounded observe-decide-validate-act loop
+│   ├── interaction.py               # Trusted Phase 5 tool execution and ranking
+│   ├── field_matcher.py             # Organization-independent semantic mapping
+│   ├── download_manager.py          # Generated filenames and PDF validation
+│   ├── tools.py                     # Explicit Phase 4 and Phase 5 allowlists
 │   └── errors.py                    # Controlled browser error taxonomy
-├── downloads/                       # Reserved for a later retrieval phase
 ├── utils/                           # Temporary-file and privacy-safe logging helpers
 └── tests/
 ```
@@ -166,13 +178,23 @@ The UI and workflow depend only on `DocumentVisionProvider`, not directly on a v
 - Debug mode can reveal sensitive extracted data locally and is clearly labelled; avoid screenshots and keep it disabled outside testing.
 - In default Ollama mode, AI inference stays on the Mac and no external AI service receives the image.
 - Phase 4 necessarily contacts the selected public website or DuckDuckGo. Search queries are validated twice and may contain organization/public terms only.
-- Chromium uses a non-persistent private context with service workers blocked, downloads disabled, no saved profile, and cleanup after the one action.
+- Chromium uses a non-persistent private context with service workers blocked and no saved profile. Unsolicited downloads and popups are blocked; expected validated report actions are temporarily allowed.
 - Page HTML and screenshots are not stored. Structured page text is bounded, and input values are never captured.
 - All webpage content is treated as untrusted observation data. It cannot change the workflow goal, allowed actions, or privacy rules.
 - An HTTP Wi-Fi connection is not appropriate for real patient documents. Use private HTTPS or test with synthetic documents.
 - If the optional OpenAI provider is selected later, the image is sent to that provider. Its request uses `store=False`.
 - Local processing is not by itself a complete medical-data security or compliance program. A real deployment still requires organization-specific retention, access-control, encryption, consent, audit, and legal review.
 
-DuckDuckGo may present a human-verification challenge to automated Chromium. The app stops with a controlled search error and does not attempt to bypass it. Phase 4 ends after one navigation/search and one structured observation; no Phase 5 action is implemented.
+DuckDuckGo or a medical portal may present human verification to automated Chromium. The app stops safely and does not attempt to bypass CAPTCHA, OTP, email verification, or other access controls.
 
-When automatic discovery stops, the app shows the URL it extracted and offers one optional, prefilled public-website correction field. A user-supplied URL is validated and inspected without submitting forms. This fallback is shown only after automatic processing fails, so normal successful scans require no extra input.
+When automatic discovery stops, the app shows the URL it extracted and offers one optional, prefilled public-website correction field. User-supplied portal URLs and missing report fields are treated as sensitive and validated before a restarted retrieval run. Normal successful scans require no extra input.
+
+If an organization has retired a URL that remains printed on its slips, an administrator can configure a migration without adding hospital-specific application logic:
+
+```env
+PORTAL_URL_OVERRIDES_JSON={"old-reports.hospital.example":"https://reports.hospital.example/login"}
+```
+
+The destination still passes the normal public-address, HTTPS, form-action, and element safety checks. Configure an override only after independently verifying the destination's ownership and TLS certificate.
+
+Generated report files use names such as `lab_report_<random-id>.pdf`; remote filenames, patient names, identifiers, and access codes are never used. Invalid, oversized, or non-PDF downloads are deleted. The current run's report and image are removed when **Scan another slip** is selected, and stale files are removed at application startup.

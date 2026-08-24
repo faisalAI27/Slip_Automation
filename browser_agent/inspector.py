@@ -59,6 +59,8 @@ def _input_type(value: object) -> HtmlInputType:
 
 def _button_action(text: object, html_type: object) -> ButtonSemanticAction:
     combined = _combined_text(text, html_type)
+    if any(term in combined for term in ("slide", "carousel", "slideshow")):
+        return ButtonSemanticAction.UNKNOWN
     if any(term in combined for term in ("download", "pdf", "save report")):
         return ButtonSemanticAction.DOWNLOAD
     if any(term in combined for term in ("view report", "view result", "show report")):
@@ -129,6 +131,9 @@ def _page_messages(snapshot: Mapping[str, Any], summary: str | None) -> list[str
     error_terms = (
         "invalid id",
         "invalid code",
+        "invalid credential",
+        "authentication failed",
+        "incorrect password",
         "report not found",
         "session expired",
         "server error",
@@ -376,6 +381,7 @@ class PageInspector:
                     html_type=_clean_text(raw.get("type")),
                     disabled=bool(raw.get("disabled")),
                     semantic_action=_button_action(raw.get("text"), raw.get("type")),
+                    form_reference=_clean_text(raw.get("formRef")),
                 )
             )
 

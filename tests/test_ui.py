@@ -8,8 +8,12 @@ from browser_agent.models import (
     BrowserActionResult,
     BrowserObservation,
     PageType,
+    RetrievalResult,
+    RetrievalStatus,
+    RetrievalUserInputRequirement,
     VerificationSignals,
 )
+from config.settings import get_settings
 from document_understanding.models import ConfidenceLevel
 from streamlit.testing.v1 import AppTest
 
@@ -61,6 +65,25 @@ def _browser_result() -> BrowserActionResult:
         warnings=[],
         error_type=None,
         error_message=None,
+    )
+
+
+def _verification_result() -> RetrievalResult:
+    return RetrievalResult(
+        status=RetrievalStatus.VERIFICATION_REQUIRED,
+        downloaded_file=None,
+        final_page_type=PageType.VERIFICATION_PAGE,
+        current_domain="example.test",
+        steps_completed=1,
+        user_input_requirement=RetrievalUserInputRequirement(
+            required=False,
+            reason=None,
+            requested_information=[],
+        ),
+        warnings=[],
+        failure_reason="The report website requires manual verification.",
+        safe_action_history=[],
+        field_mappings=[],
     )
 
 
@@ -137,6 +160,26 @@ class UserInterfaceTests(unittest.TestCase):
         self.assertIn("Links", subheaders)
         self.assertIn("Download candidates", subheaders)
 
+    def test_validated_pdf_is_exposed_as_download_report(self) -> None:
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        settings = get_settings()
+        settings.temp_dir.mkdir(parents=True, exist_ok=True)
+        report_path = settings.temp_dir / "lab_report_ui_test.pdf"
+        report_path.write_bytes(b"%PDF-1.7\nsynthetic test report")
+        try:
+            app = AppTest.from_file(app_path)
+            app.session_state["workflow_state"] = WorkflowState.DOWNLOAD_READY
+            app.session_state["resulting_file_path"] = str(report_path)
+
+            app.run(timeout=15)
+
+            self.assertFalse(app.exception)
+            self.assertIn("Your report is ready.", [item.value for item in app.success])
+            self.assertEqual(len(app.get("download_button")), 1)
+            self.assertEqual(app.get("download_button")[0].label, "Download report")
+        finally:
+            report_path.unlink(missing_ok=True)
+
     def test_browser_failure_offers_prefilled_optional_url_recovery(self) -> None:
         app_path = Path(__file__).resolve().parents[1] / "app.py"
         result = DocumentUnderstandingResult.model_validate(RESULT_PAYLOAD)
@@ -173,14 +216,18 @@ class UserInterfaceTests(unittest.TestCase):
         )
 
         app.text_input[0].set_value("reports.example.test")
-        with patch("ui.main_page.BrowserExecutor.from_settings") as browser_factory:
+        with (
+            patch("ui.main_page.BrowserExecutor.from_settings") as browser_factory,
+            patch("ui.main_page.RetrievalAgent.from_settings") as retrieval_factory,
+        ):
             browser_factory.return_value.execute.return_value = _browser_result()
+            retrieval_factory.return_value.run.return_value = _verification_result()
             app.button[0].click().run(timeout=15)
 
         self.assertFalse(app.exception)
         self.assertEqual(
             app.session_state["workflow_state"],
-            WorkflowState.BROWSER_OBSERVATION_READY,
+            WorkflowState.VERIFICATION_REQUIRED,
         )
         self.assertEqual(
             app.session_state["workflow_plan"]["portal_strategy"],

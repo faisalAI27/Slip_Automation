@@ -84,7 +84,7 @@ class DuckDuckGoSearchProvider:
                 results.append(
                     SearchResult(
                         title=title[:300],
-                        url=redact_url_for_display(destination),
+                        url=destination,
                         domain=domain,
                         snippet=snippet or None,
                         position=len(results) + 1,

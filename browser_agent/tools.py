@@ -26,6 +26,8 @@ PHASE4_EXECUTABLE_TOOLS = frozenset(
     }
 )
 
+PHASE5_EXECUTABLE_TOOLS = frozenset(BrowserToolName)
+
 
 class Phase4BrowserToolInterface(Protocol):
     """Only these operations may be reachable from the Phase 4 application flow."""
@@ -37,8 +39,8 @@ class Phase4BrowserToolInterface(Protocol):
     def inspect_page(self) -> BrowserObservation: ...
 
 
-class FutureBrowserInteractionInterface(Protocol):
-    """Phase 5 contract only; Phase 4 provides no concrete implementation."""
+class Phase5BrowserInteractionInterface(Protocol):
+    """Explicit allowlisted interaction surface for bounded Phase 5 execution."""
 
     def fill_field(self, element_id: str, value: str) -> None: ...
 

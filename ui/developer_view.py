@@ -1,8 +1,8 @@
-"""Sensitive local-only developer presentation for Phases 2 through 4."""
+"""Sensitive local-only developer presentation for Phases 2 through 5."""
 
 import streamlit as st
 
-from browser_agent.models import BrowserActionResult
+from browser_agent.models import BrowserActionResult, RetrievalResult
 from document_understanding.models import DocumentUnderstandingResult
 from workflow.models import WorkflowPlan
 
@@ -374,3 +374,53 @@ def render_browser_execution_debug(result_data: dict[str, object]) -> None:
 
     with st.expander("Raw browser observation JSON", icon=":material/data_object:"):
         st.json(result.model_dump(mode="json"))
+
+
+def render_retrieval_debug(result_data: dict[str, object]) -> None:
+    """Render only the retrieval metadata that is safe to persist in Session State."""
+    result = RetrievalResult.model_validate(result_data)
+    st.warning(
+        "Retrieval diagnostics omit field values and the local report path. "
+        "Webpage labels are untrusted content.",
+        icon=":material/security:",
+    )
+    st.subheader("Retrieval result")
+    st.table(
+        [
+            {
+                "Status": _display(result.status.value),
+                "Final page type": _display(
+                    result.final_page_type.value if result.final_page_type else None
+                ),
+                "Domain": _display(result.current_domain),
+                "Steps": result.steps_completed,
+                "File validated": bool(result.downloaded_file),
+                "File size": (
+                    result.downloaded_file.size_bytes
+                    if result.downloaded_file
+                    else "—"
+                ),
+            }
+        ]
+    )
+    st.subheader("Safe action history")
+    if result.safe_action_history:
+        st.dataframe(
+            [item.model_dump(mode="json") for item in result.safe_action_history],
+            hide_index=True,
+            width="stretch",
+        )
+    else:
+        st.caption("No controlled interaction was executed.")
+    st.subheader("Field mappings")
+    if result.field_mappings:
+        st.dataframe(
+            [item.model_dump(mode="json") for item in result.field_mappings],
+            hide_index=True,
+            width="stretch",
+        )
+    else:
+        st.caption("No document-to-website field mappings were used.")
+    if result.failure_reason:
+        st.caption("Controlled stop reason")
+        st.write(result.failure_reason)

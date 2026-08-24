@@ -64,7 +64,11 @@ PAGE_SNAPSHOT_SCRIPT = r"""
   const buttons = Array.from(
     document.querySelectorAll('button, input[type="submit"], input[type="button"], input[type="reset"], [role="button"]')
   )
-    .filter(visible)
+    .filter((element) => {
+      if (!visible(element)) return false;
+      const className = typeof element.className === "string" ? element.className : "";
+      return !/(?:swiper|carousel|slideshow|slick)[-_ ]/i.test(className);
+    })
     .map((element, index) => {
       const ref = `button_${index + 1}`;
       element.setAttribute("data-slip-ref", ref);
@@ -75,6 +79,7 @@ PAGE_SNAPSHOT_SCRIPT = r"""
         ),
         type: clean(element.getAttribute("type") || element.getAttribute("role")),
         disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
+        formRef: element.form ? clean(element.form.getAttribute("data-slip-ref")) : null,
       };
     });
 
@@ -102,9 +107,9 @@ PAGE_SNAPSHOT_SCRIPT = r"""
     .map((element) => clean(element.innerText))
     .filter(Boolean);
 
-  const captchaNodes = document.querySelectorAll(
+  const captchaNodes = Array.from(document.querySelectorAll(
     '[id*="captcha" i], [class*="captcha" i], iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], [data-sitekey]'
-  ).length;
+  )).filter(visible).length;
   const iframeHints = Array.from(document.querySelectorAll("iframe"))
     .map((frame) => clean(`${frame.title || ""} ${frame.name || ""} ${frame.src || ""}`))
     .filter(Boolean);

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from functools import lru_cache
+import json
 import os
 from pathlib import Path
 
@@ -16,6 +17,22 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _as_url_overrides(value: str | None) -> dict[str, str]:
+    if not value or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {
+        str(host).strip().casefold(): str(url).strip()
+        for host, url in parsed.items()
+        if str(host).strip() and str(url).strip()
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +52,14 @@ class Settings:
     browser_timeout_seconds: float
     browser_navigation_timeout_seconds: float
     browser_max_search_results: int
+    agent_max_steps: int
+    agent_max_navigations: int
+    agent_max_form_submissions: int
+    agent_max_wait_seconds: float
+    max_report_download_mb: int
+    interaction_ai_provider: str
+    interaction_ai_model: str
+    portal_url_overrides: dict[str, str]
     log_level: str
 
 
@@ -71,6 +96,26 @@ def get_settings() -> Settings:
         ),
         browser_max_search_results=max(
             1, min(10, int(os.getenv("BROWSER_MAX_SEARCH_RESULTS", "8")))
+        ),
+        agent_max_steps=max(1, int(os.getenv("AGENT_MAX_STEPS", "12"))),
+        agent_max_navigations=max(
+            1, int(os.getenv("AGENT_MAX_NAVIGATIONS", "6"))
+        ),
+        agent_max_form_submissions=max(
+            1, int(os.getenv("AGENT_MAX_FORM_SUBMISSIONS", "2"))
+        ),
+        agent_max_wait_seconds=max(
+            0.0, min(30.0, float(os.getenv("AGENT_MAX_WAIT_SECONDS", "8")))
+        ),
+        max_report_download_mb=max(
+            1, int(os.getenv("MAX_REPORT_DOWNLOAD_MB", "25"))
+        ),
+        interaction_ai_provider=os.getenv(
+            "INTERACTION_AI_PROVIDER", "deterministic"
+        ).strip(),
+        interaction_ai_model=os.getenv("INTERACTION_AI_MODEL", "").strip(),
+        portal_url_overrides=_as_url_overrides(
+            os.getenv("PORTAL_URL_OVERRIDES_JSON")
         ),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
     )

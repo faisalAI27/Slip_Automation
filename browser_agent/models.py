@@ -92,6 +92,7 @@ class ButtonObservation(StrictBrowserModel):
     html_type: str | None = None
     disabled: bool
     semantic_action: ButtonSemanticAction
+    form_reference: str | None = None
 
 
 class LinkObservation(StrictBrowserModel):
@@ -193,4 +194,165 @@ class BrowserActionResult(StrictBrowserModel):
                 )
         elif not self.error_type or not self.error_message:
             raise ValueError("Failed browser results require a controlled error.")
+        return self
+
+
+class AgentActionType(str, Enum):
+    OPEN_URL = "open_url"
+    SEARCH_WEB = "search_web"
+    OPEN_SEARCH_RESULT = "open_search_result"
+    FILL_FIELD = "fill_field"
+    CLICK = "click"
+    WAIT = "wait"
+    GO_BACK = "go_back"
+    DOWNLOAD = "download"
+    REQUEST_USER_INPUT = "request_user_input"
+    COMPLETE = "complete"
+    STOP = "stop"
+
+
+class RetrievalStatus(str, Enum):
+    DOWNLOADED = "downloaded"
+    USER_INPUT_REQUIRED = "user_input_required"
+    VERIFICATION_REQUIRED = "verification_required"
+    REPORT_NOT_FOUND = "report_not_found"
+    AMBIGUOUS = "ambiguous"
+    UNSUPPORTED = "unsupported"
+    FAILED = "failed"
+
+
+class SafeDocumentField(StrictBrowserModel):
+    ref: str = Field(pattern=r"^doc_field_\d+$")
+    label: str | None = None
+    semantic_type: str = Field(min_length=1)
+    confidence: ConfidenceLevel
+
+
+class FieldMatch(StrictBrowserModel):
+    document_field_ref: str = Field(pattern=r"^doc_field_\d+$")
+    document_label: str | None = None
+    document_semantic_type: str = Field(min_length=1)
+    input_element_id: str = Field(pattern=r"^input_\d+$")
+    page_field_label: str | None = None
+    confidence: ConfidenceLevel
+
+
+class FieldMappingResult(StrictBrowserModel):
+    matches: list[FieldMatch]
+    unmatched_required_inputs: list[str]
+    ambiguous_input_references: list[str]
+
+    @property
+    def actionable(self) -> bool:
+        return not self.unmatched_required_inputs and not self.ambiguous_input_references
+
+
+class AgentAction(StrictBrowserModel):
+    type: AgentActionType
+    element_id: str | None = None
+    document_field_ref: str | None = None
+    search_result_position: int | None = Field(default=None, ge=1)
+    wait_seconds: float | None = Field(default=None, ge=0, le=30)
+    reason: str = Field(min_length=1)
+    confidence: ConfidenceLevel
+
+    @model_validator(mode="after")
+    def validate_action_payload(self) -> "AgentAction":
+        element_actions = {
+            AgentActionType.CLICK,
+            AgentActionType.DOWNLOAD,
+        }
+        if self.type == AgentActionType.FILL_FIELD:
+            if not self.element_id or not self.document_field_ref:
+                raise ValueError("FILL_FIELD requires element and document references.")
+        elif self.type in element_actions:
+            if not self.element_id or self.document_field_ref:
+                raise ValueError(f"{self.type.value} requires only an element reference.")
+        elif self.type == AgentActionType.OPEN_SEARCH_RESULT:
+            if self.search_result_position is None:
+                raise ValueError("OPEN_SEARCH_RESULT requires a result position.")
+        elif self.type == AgentActionType.WAIT:
+            if self.wait_seconds is None:
+                raise ValueError("WAIT requires a bounded duration.")
+        elif any(
+            value is not None
+            for value in (
+                self.element_id,
+                self.document_field_ref,
+                self.search_result_position,
+                self.wait_seconds,
+            )
+        ):
+            raise ValueError("This action type does not accept execution references.")
+        return self
+
+
+class SafeActionRecord(StrictBrowserModel):
+    step: int = Field(ge=1)
+    action_type: AgentActionType
+    element_id: str | None = None
+    document_semantic_type: str | None = None
+    target_domain: str | None = None
+    outcome: str = Field(min_length=1)
+
+
+class RetrievalChoice(StrictBrowserModel):
+    label: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+
+
+class RetrievalUserInputRequirement(StrictBrowserModel):
+    required: bool
+    reason: str | None = None
+    requested_information: list[str]
+    choices: list[RetrievalChoice] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_requirement(self) -> "RetrievalUserInputRequirement":
+        if self.required and not self.reason:
+            raise ValueError("Required retrieval input must include a reason.")
+        if not self.required and (
+            self.reason or self.requested_information or self.choices
+        ):
+            raise ValueError("Optional retrieval input cannot request information.")
+        return self
+
+
+class UserProvidedField(StrictBrowserModel):
+    label: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+    semantic_type: str = "unknown"
+
+
+class DownloadedFile(StrictBrowserModel):
+    path: str = Field(min_length=1)
+    media_type: str = "application/pdf"
+    size_bytes: int = Field(gt=0)
+    validation_status: str = "validated"
+
+
+class RetrievalResult(StrictBrowserModel):
+    status: RetrievalStatus
+    downloaded_file: DownloadedFile | None = None
+    final_page_type: PageType | None = None
+    current_domain: str | None = None
+    steps_completed: int = Field(ge=0)
+    user_input_requirement: RetrievalUserInputRequirement
+    warnings: list[str]
+    failure_reason: str | None = None
+    safe_action_history: list[SafeActionRecord]
+    field_mappings: list[FieldMatch]
+
+    @model_validator(mode="after")
+    def validate_retrieval_result(self) -> "RetrievalResult":
+        if self.status == RetrievalStatus.DOWNLOADED and self.downloaded_file is None:
+            raise ValueError("Downloaded retrieval results require a validated file.")
+        if self.status != RetrievalStatus.DOWNLOADED and self.downloaded_file is not None:
+            raise ValueError("Only downloaded retrieval results may include a file.")
+        needs_input = self.status in {
+            RetrievalStatus.USER_INPUT_REQUIRED,
+            RetrievalStatus.AMBIGUOUS,
+        }
+        if self.user_input_requirement.required != needs_input:
+            raise ValueError("Retrieval status and user-input requirement disagree.")
         return self

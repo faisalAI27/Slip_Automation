@@ -60,6 +60,10 @@ def registrable_domain(hostname: str) -> str:
         "co.in",
         "co.nz",
         "co.za",
+        "edu.pk",
+        "gov.pk",
+        "net.pk",
+        "org.pk",
     }
     suffix = ".".join(labels[-2:])
     return ".".join(labels[-3:]) if suffix in multi_label_suffixes else suffix

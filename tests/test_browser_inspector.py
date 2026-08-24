@@ -104,6 +104,70 @@ class BrowserInspectorTests(unittest.TestCase):
         self.assertTrue(observation.verification_signals.verification_required)
         self.assertEqual(observation.page_type, PageType.VERIFICATION_PAGE)
 
+    def test_hidden_captcha_markup_does_not_force_verification(self) -> None:
+        snapshot = _snapshot()
+        snapshot["inputs"] = [
+            {
+                "ref": "input_1",
+                "type": "text",
+                "name": "username",
+                "placeholder": "Username",
+                "required": False,
+                "disabled": False,
+                "readOnly": False,
+            },
+            {
+                "ref": "input_2",
+                "type": "password",
+                "name": "password",
+                "placeholder": "Password",
+                "required": False,
+                "disabled": False,
+                "readOnly": False,
+            },
+        ]
+        snapshot["buttons"] = [
+            {
+                "ref": "button_1",
+                "text": "Login",
+                "type": "submit",
+                "disabled": False,
+            }
+        ]
+        snapshot["captchaNodes"] = 0
+        snapshot["visibleText"] = "Sign In"
+
+        observation = self.inspector.from_snapshot(
+            snapshot,
+            final_url="https://reports.example.test/login",
+            page_title="Reports",
+        )
+
+        self.assertFalse(observation.verification_signals.verification_required)
+        self.assertEqual(observation.page_type, PageType.REPORT_LOGIN_PAGE)
+
+    def test_carousel_next_button_is_not_a_workflow_continue_action(self) -> None:
+        snapshot = _snapshot()
+        snapshot["buttons"] = [
+            {
+                "ref": "button_1",
+                "text": "Next slide",
+                "type": "button",
+                "disabled": False,
+            }
+        ]
+
+        observation = self.inspector.from_snapshot(
+            snapshot,
+            final_url="https://example.test/",
+            page_title="Hospital",
+        )
+
+        self.assertEqual(
+            observation.buttons[0].semantic_action,
+            ButtonSemanticAction.UNKNOWN,
+        )
+
     def test_otp_is_detected(self) -> None:
         snapshot = _snapshot()
         snapshot["inputs"] = [

@@ -6,7 +6,9 @@ import uuid
 
 import streamlit as st
 
+from browser_agent.agent import RetrievalAgent
 from browser_agent.executor import BrowserExecutor
+from browser_agent.models import RetrievalResult, RetrievalStatus, UserProvidedField
 from config.settings import Settings
 from document_understanding.models import AnalysisStatus, DocumentUnderstandingResult
 from document_understanding.provider import (
@@ -19,17 +21,21 @@ from document_understanding.provider import (
 from document_understanding.service import DocumentUnderstandingService
 from ui.components import (
     render_browser_outcome,
+    render_download_ready,
     render_error,
     render_footer,
     render_header,
     render_image_preview,
     render_progress,
     render_plan_outcome,
+    render_report_not_found,
     render_user_input_required,
+    render_verification_required,
 )
 from ui.developer_view import (
     render_browser_execution_debug,
     render_document_debug,
+    render_retrieval_debug,
     render_workflow_plan_debug,
 )
 from ui.result_view import render_extracted_document, render_portal_attempt_details
@@ -61,6 +67,11 @@ DEFAULT_SESSION_VALUES = {
     "document_understanding_result": None,
     "workflow_plan": None,
     "browser_action_result": None,
+    "retrieval_result": None,
+    "retrieval_stage": None,
+    "user_provided_fields": [],
+    "retrieval_choice": None,
+    "auto_retrieve_requested": False,
     "developer_mode_enabled": False,
     "document_processing_stage": None,
     "planning_stage": None,
@@ -101,13 +112,17 @@ def _run_file_paths() -> list[Path | None]:
 def _reset_run(settings: Settings) -> None:
     remove_files(_run_file_paths(), settings.temp_dir)
     developer_mode_enabled = st.session_state.get("developer_mode_enabled", False)
-    for key in list(DEFAULT_SESSION_VALUES) + [
+    dynamic_input_keys = [
+        key for key in st.session_state if key.startswith("retrieval_input_")
+    ]
+    for key in list(DEFAULT_SESSION_VALUES) + dynamic_input_keys + [
         "photo_input_method",
         "upload_slip",
         "camera_slip",
         "show_raw_document_json",
         "show_raw_workflow_plan_json",
         "show_raw_browser_observation_json",
+        "retrieval_choice_widget",
         "manual_portal_url",
         "run_session_id",
     ]:
@@ -171,6 +186,11 @@ def _accept_selected_image(selected_file: object, settings: Settings) -> None:
     st.session_state.document_understanding_result = None
     st.session_state.workflow_plan = None
     st.session_state.browser_action_result = None
+    st.session_state.retrieval_result = None
+    st.session_state.retrieval_stage = None
+    st.session_state.user_provided_fields = []
+    st.session_state.retrieval_choice = None
+    st.session_state.auto_retrieve_requested = False
     st.session_state.error_state = None
     st.session_state.internal_error = None
     st.session_state.planning_stage = None
@@ -422,6 +442,7 @@ def _use_manual_portal_url(value: str) -> None:
     st.session_state.planning_stage = "workflow_planning:user_provided_url"
     st.session_state.browser_execution_stage = None
     st.session_state.processing_status = "Website ready to check"
+    st.session_state.auto_retrieve_requested = True
     _set_state(WorkflowState.PLAN_READY)
     st.rerun()
 
@@ -523,6 +544,193 @@ def _execute_browser(settings: Settings, area: object) -> None:
         st.rerun()
 
 
+def _retrieve_report(settings: Settings, area: object) -> None:
+    """Continue Phase 4's observation with one bounded Phase 5 agent run."""
+    area.empty()
+    progress_area = st.empty()
+    _set_state(WorkflowState.RETRIEVING_REPORT)
+    st.session_state.processing_status = "Retrieving your report"
+    st.session_state.retrieval_stage = "report_retrieval:running"
+
+    try:
+        document = DocumentUnderstandingResult.model_validate(
+            st.session_state.document_understanding_result
+        )
+        plan = WorkflowPlan.model_validate(st.session_state.workflow_plan)
+        user_fields = [
+            UserProvidedField.model_validate(item)
+            for item in st.session_state.user_provided_fields
+        ]
+        with progress_area.container():
+            render_progress(WorkflowState.RETRIEVING_REPORT)
+            with st.spinner(
+                "Using a private browser session to retrieve the report safely.",
+                show_time=True,
+                width="stretch",
+            ):
+                result = RetrievalAgent.from_settings(settings).run(
+                    document,
+                    plan,
+                    user_fields=user_fields,
+                    selected_choice=st.session_state.retrieval_choice,
+                )
+
+        st.session_state.retrieval_result = result.model_dump(mode="json")
+        st.session_state.retrieval_stage = f"report_retrieval:{result.status.value}"
+        st.session_state.internal_error = None
+        st.session_state.error_state = None
+
+        if result.status == RetrievalStatus.DOWNLOADED:
+            assert result.downloaded_file is not None
+            st.session_state.resulting_file_path = result.downloaded_file.path
+            st.session_state.processing_status = "Report ready"
+            _set_state(WorkflowState.DOWNLOAD_READY)
+        elif result.status in {
+            RetrievalStatus.USER_INPUT_REQUIRED,
+            RetrievalStatus.AMBIGUOUS,
+        }:
+            st.session_state.processing_status = "A small confirmation is needed"
+            _set_state(WorkflowState.USER_INPUT_REQUIRED)
+        elif result.status == RetrievalStatus.VERIFICATION_REQUIRED:
+            st.session_state.processing_status = "Website verification required"
+            _set_state(WorkflowState.VERIFICATION_REQUIRED)
+        elif result.status == RetrievalStatus.REPORT_NOT_FOUND:
+            st.session_state.processing_status = "Report not found"
+            _set_state(WorkflowState.REPORT_NOT_FOUND)
+        elif result.status == RetrievalStatus.UNSUPPORTED:
+            st.session_state.processing_status = "Unsupported retrieval flow"
+            _set_state(WorkflowState.UNSUPPORTED)
+        else:
+            st.session_state.error_state = (
+                result.failure_reason
+                or "We couldn't retrieve the report automatically. Please try again."
+            )
+            st.session_state.processing_status = "Report retrieval stopped"
+            _set_state(WorkflowState.FAILED)
+        st.rerun()
+    except (ValueError, TypeError) as exc:
+        logger.error("Retrieval input failed validation: %s", type(exc).__name__)
+        st.session_state.error_state = "We couldn't prepare report retrieval. Please try again."
+        st.session_state.internal_error = type(exc).__name__
+        st.session_state.retrieval_stage = "report_retrieval:validation_error"
+        _set_state(WorkflowState.FAILED)
+        st.rerun()
+    except Exception as exc:
+        logger.error("Unexpected report retrieval failure: %s", type(exc).__name__)
+        st.session_state.error_state = "We couldn't retrieve the report. Please try again."
+        st.session_state.internal_error = type(exc).__name__
+        st.session_state.retrieval_stage = "report_retrieval:unexpected_error"
+        _set_state(WorkflowState.FAILED)
+        st.rerun()
+
+
+def _is_sensitive_label(label: str) -> bool:
+    lowered = label.casefold()
+    return any(
+        term in lowered
+        for term in ("password", "pin", "code", "credential", "access")
+    )
+
+
+def _render_retrieval_input(settings: Settings) -> None:
+    result_data = st.session_state.retrieval_result
+    if not result_data:
+        render_user_input_required()
+        return
+    result = RetrievalResult.model_validate(result_data)
+    requirement = result.user_input_requirement
+    st.warning(
+        requirement.reason or "A small confirmation is needed.",
+        icon=":material/help:",
+    )
+    st.caption("Only the information needed by the report website is requested.")
+
+    if not requirement.choices and not requirement.requested_information:
+        st.caption(
+            "The website did not expose a safe automatic next step. No extra "
+            "information is requested because it would not help this run."
+        )
+        if st.button(
+            "Scan another slip", icon=":material/restart_alt:", width="stretch"
+        ):
+            _reset_run(settings)
+        return
+
+    with st.form("retrieval_input_form", border=True):
+        selected_choice = None
+        if requirement.choices:
+            labels = {item.value: item.label for item in requirement.choices}
+            selected_choice = st.selectbox(
+                "Choose the correct report option",
+                options=list(labels),
+                format_func=lambda value: labels[value],
+                key="retrieval_choice_widget",
+            )
+
+        supplied: list[UserProvidedField] = []
+        for index, label in enumerate(requirement.requested_information):
+            value = st.text_input(
+                label,
+                type="password" if _is_sensitive_label(label) else "default",
+                key=f"retrieval_input_{index}",
+            )
+            if value.strip():
+                supplied.append(
+                    UserProvidedField(
+                        label=label,
+                        value=value.strip(),
+                        semantic_type=(
+                            "access_credential"
+                            if _is_sensitive_label(label)
+                            else "unknown"
+                        ),
+                    )
+                )
+
+        submitted = st.form_submit_button(
+            "Continue safely",
+            type="primary",
+            icon=":material/arrow_forward:",
+            width="stretch",
+        )
+
+    if submitted:
+        if requirement.requested_information and len(supplied) != len(
+            requirement.requested_information
+        ):
+            st.session_state.error_state = "Enter the requested information to continue."
+            st.rerun()
+        st.session_state.user_provided_fields = [
+            item.model_dump(mode="json") for item in supplied
+        ]
+        st.session_state.retrieval_choice = selected_choice
+        st.session_state.error_state = None
+        st.session_state.retrieval_result = None
+        _set_state(WorkflowState.BROWSER_OBSERVATION_READY)
+        st.rerun()
+
+    if st.session_state.error_state:
+        render_error(st.session_state.error_state)
+    if st.button("Scan another slip", icon=":material/restart_alt:", width="stretch"):
+        _reset_run(settings)
+
+
+def _validated_report_bytes(settings: Settings) -> bytes | None:
+    path_value = st.session_state.resulting_file_path
+    if not path_value:
+        return None
+    path = Path(path_value).resolve()
+    try:
+        if path.parent != settings.temp_dir.resolve() or not path.is_file():
+            return None
+        if path.stat().st_size > settings.max_report_download_mb * 1024 * 1024:
+            return None
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return data if data.startswith(b"%PDF") else None
+
+
 def _render_developer_details(settings: Settings) -> None:
     if not settings.debug_mode:
         return
@@ -533,11 +741,12 @@ def _render_developer_details(settings: Settings) -> None:
                 {
                     "workflow_state": st.session_state.workflow_state.value,
                     "temporary_image_path": st.session_state.temporary_image_path,
-                    "resulting_file_path": st.session_state.resulting_file_path,
+                    "report_file_ready": bool(st.session_state.resulting_file_path),
                     "processing_status": st.session_state.processing_status,
                     "document_stage": st.session_state.document_processing_stage,
                     "planning_stage": st.session_state.planning_stage,
                     "browser_stage": st.session_state.browser_execution_stage,
+                    "retrieval_stage": st.session_state.retrieval_stage,
                     "error": st.session_state.error_state,
                     "internal_error": st.session_state.internal_error,
                     "run_session_id": st.session_state.run_session_id,
@@ -545,6 +754,7 @@ def _render_developer_details(settings: Settings) -> None:
                     "document_provider": settings.document_ai_provider,
                     "document_model": settings.document_ai_model,
                     "browser_headless": settings.browser_headless,
+                    "agent_max_steps": settings.agent_max_steps,
                 }
             )
             if st.session_state.document_understanding_result:
@@ -553,6 +763,8 @@ def _render_developer_details(settings: Settings) -> None:
                 render_workflow_plan_debug(st.session_state.workflow_plan)
             if st.session_state.browser_action_result:
                 render_browser_execution_debug(st.session_state.browser_action_result)
+            if st.session_state.retrieval_result:
+                render_retrieval_debug(st.session_state.retrieval_result)
 
 
 def render_app(settings: Settings) -> None:
@@ -567,20 +779,55 @@ def render_app(settings: Settings) -> None:
         with main_area.container():
             should_process = _render_upload_area(settings)
         if should_process:
+            st.session_state.auto_retrieve_requested = True
             _process_document(settings, main_area)
     elif state == WorkflowState.DOCUMENT_UNDERSTOOD:
         _plan_workflow(main_area)
     elif state == WorkflowState.PLAN_READY:
         _execute_browser(settings, main_area)
     elif state == WorkflowState.BROWSER_OBSERVATION_READY:
+        if st.session_state.auto_retrieve_requested:
+            _retrieve_report(settings, main_area)
+        else:
+            with main_area.container():
+                result_data = st.session_state.document_understanding_result or {}
+                render_browser_outcome()
+                render_extracted_document(result_data)
+                if st.button(
+                    "Scan another slip", icon=":material/restart_alt:", width="stretch"
+                ):
+                    _reset_run(settings)
+    elif state == WorkflowState.DOWNLOAD_READY:
         with main_area.container():
-            result_data = st.session_state.document_understanding_result or {}
-            render_browser_outcome()
-            render_extracted_document(result_data)
-            st.caption(
-                "The service was inspected without submitting forms, entering credentials, "
-                "clicking report actions, or downloading files."
-            )
+            report_data = _validated_report_bytes(settings)
+            if report_data is None:
+                render_error("The temporary report file is no longer available.")
+            else:
+                render_download_ready()
+                st.download_button(
+                    "Download report",
+                    data=report_data,
+                    file_name="lab_report.pdf",
+                    mime="application/pdf",
+                    type="primary",
+                    icon=":material/download:",
+                    on_click="ignore",
+                    width="stretch",
+                )
+            if st.button(
+                "Scan another slip", icon=":material/restart_alt:", width="stretch"
+            ):
+                _reset_run(settings)
+    elif state == WorkflowState.VERIFICATION_REQUIRED:
+        with main_area.container():
+            render_verification_required()
+            if st.button(
+                "Scan another slip", icon=":material/restart_alt:", width="stretch"
+            ):
+                _reset_run(settings)
+    elif state == WorkflowState.REPORT_NOT_FOUND:
+        with main_area.container():
+            render_report_not_found()
             if st.button(
                 "Scan another slip", icon=":material/restart_alt:", width="stretch"
             ):
@@ -597,14 +844,17 @@ def render_app(settings: Settings) -> None:
                 _reset_run(settings)
     elif state == WorkflowState.USER_INPUT_REQUIRED:
         with main_area.container():
-            render_user_input_required()
-            result_data = st.session_state.document_understanding_result or {}
-            if result_data:
-                render_extracted_document(result_data)
-            if st.button(
-                "Scan another slip", icon=":material/restart_alt:", width="stretch"
-            ):
-                _reset_run(settings)
+            if st.session_state.retrieval_result:
+                _render_retrieval_input(settings)
+            else:
+                render_user_input_required()
+                result_data = st.session_state.document_understanding_result or {}
+                if result_data:
+                    render_extracted_document(result_data)
+                if st.button(
+                    "Scan another slip", icon=":material/restart_alt:", width="stretch"
+                ):
+                    _reset_run(settings)
     elif state == WorkflowState.FAILED:
         with main_area.container():
             render_error(st.session_state.error_state)

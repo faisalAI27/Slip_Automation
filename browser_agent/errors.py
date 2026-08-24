@@ -39,3 +39,19 @@ class PageInspectionError(BrowserAgentError):
 
 class NonActionablePlanError(BrowserAgentError):
     pass
+
+
+class InteractionSafetyError(BrowserAgentError):
+    pass
+
+
+class ElementUnavailableError(BrowserAgentError):
+    pass
+
+
+class DownloadCaptureError(BrowserAgentError):
+    pass
+
+
+class DownloadValidationError(BrowserAgentError):
+    pass
