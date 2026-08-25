@@ -1,3 +1,4 @@
+import unittest
 from concurrent.futures import Future
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -5,7 +6,6 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Lock
-import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -123,6 +123,16 @@ class BackendApiTests(unittest.TestCase):
         return self.client.post(
             "/api/v1/jobs",
             files={"slip": (filename, data or _png_bytes(), "image/png")},
+        )
+
+    def test_new_jobs_are_rejected_during_shutdown(self):
+        self.app.state.accepting_jobs = False
+
+        response = self._post_image()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["detail"], "The report service is shutting down."
         )
 
     def _set_completed_outcome(self, report_count=1, bundle=False):

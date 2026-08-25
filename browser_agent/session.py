@@ -1,21 +1,25 @@
 """Reusable isolated Playwright Chromium session for controlled navigation."""
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-import re
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from playwright.sync_api import (
     Browser,
     BrowserContext,
     Download,
-    Error as PlaywrightError,
     Page,
     Playwright,
-    Route,
     Response,
-    TimeoutError as PlaywrightTimeoutError,
+    Route,
     sync_playwright,
+)
+from playwright.sync_api import (
+    Error as PlaywrightError,
+)
+from playwright.sync_api import (
+    TimeoutError as PlaywrightTimeoutError,
 )
 
 from browser_agent.errors import (
@@ -37,13 +41,13 @@ from browser_agent.safety import (
 )
 from utils.logger import get_logger
 
-
 logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
 class BrowserSessionConfig:
     headless: bool = True
+    chromium_sandbox: bool = True
     timeout_seconds: float = 30.0
     navigation_timeout_seconds: float = 45.0
     navigation_url_rewrites: dict[str, str] = field(default_factory=dict)
@@ -169,7 +173,9 @@ class BrowserSession:
         try:
             self._playwright = sync_playwright().start()
             self._browser = self._playwright.chromium.launch(
-                headless=self._config.headless
+                headless=self._config.headless,
+                chromium_sandbox=self._config.chromium_sandbox,
+                args=["--disable-dev-shm-usage"],
             )
             self._context = self._browser.new_context(
                 accept_downloads=True,

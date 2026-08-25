@@ -10,8 +10,8 @@ from browser_agent.field_matcher import DocumentFieldStore, FieldMatcher
 from browser_agent.interaction import (
     ControlledBrowserTools,
     RetrievalToolset,
-    SearchSelection,
     SearchResultRanker,
+    SearchSelection,
 )
 from browser_agent.models import (
     AgentAction,
@@ -29,8 +29,8 @@ from browser_agent.models import (
     RetrievalResult,
     RetrievalStatus,
     RetrievalUserInputRequirement,
-    SafePageDiagnostics,
     SafeActionRecord,
+    SafePageDiagnostics,
     SearchObservation,
     UserProvidedField,
 )
@@ -41,7 +41,6 @@ from document_understanding.models import DocumentUnderstandingResult
 from utils.logger import get_logger
 from workflow.models import ActionType, PlanningStatus, WorkflowPlan
 from workflow.validation import PlanningValidationError, validate_search_query
-
 
 logger = get_logger(__name__)
 ToolFactory = Callable[[DocumentFieldStore], RetrievalToolset]
@@ -90,6 +89,7 @@ class RetrievalAgent:
     def from_settings(cls, settings: Settings) -> "RetrievalAgent":
         session_config = BrowserSessionConfig(
             headless=settings.browser_headless,
+            chromium_sandbox=True,
             timeout_seconds=settings.browser_timeout_seconds,
             navigation_timeout_seconds=settings.browser_navigation_timeout_seconds,
             navigation_url_rewrites=settings.portal_https_host_rewrites,

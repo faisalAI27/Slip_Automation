@@ -11,13 +11,12 @@ from typing import Protocol
 
 from backend.schemas import JobStatus
 from services.models import (
+    SAFE_PROGRESS_MESSAGES,
     ProgressEvent,
     ProgressStage,
     RetrievedReport,
-    SAFE_PROGRESS_MESSAGES,
 )
 from utils.file_utils import remove_files
-
 
 Clock = Callable[[], datetime]
 
@@ -76,6 +75,8 @@ class JobStore(Protocol):
     def get_file(self, job_id: str, file_id: str) -> JobFile | None: ...
 
     def cleanup_expired(self) -> int: ...
+
+    def cleanup_all(self) -> int: ...
 
 
 class LocalJobStore:
@@ -216,15 +217,32 @@ class LocalJobStore:
         with self._lock:
             return self._cleanup_expired_locked(self._clock())
 
+    def cleanup_all(self) -> int:
+        """Remove every job and owned file when this process is shutting down."""
+        with self._lock:
+            records = list(self._jobs.values())
+            self._jobs.clear()
+            self._remove_record_files(records)
+            return len(records)
+
     def _cleanup_expired_locked(self, now: datetime) -> int:
         expired_ids = [
             job_id for job_id, record in self._jobs.items() if record.expires_at <= now
         ]
         for job_id in expired_ids:
-            record = self._jobs.pop(job_id)
-            paths = [record.upload_path, *(item.path for item in record.files.values())]
-            remove_files(list(dict.fromkeys(paths)), self._temp_dir)
+            self._remove_record_files([self._jobs.pop(job_id)])
         return len(expired_ids)
+
+    def _remove_record_files(self, records: list[JobRecord]) -> None:
+        paths = [
+            path
+            for record in records
+            for path in [
+                record.upload_path,
+                *(item.path for item in record.files.values()),
+            ]
+        ]
+        remove_files(list(dict.fromkeys(paths)), self._temp_dir)
 
     @staticmethod
     def _job_file(

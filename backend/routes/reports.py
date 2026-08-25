@@ -1,9 +1,9 @@
 """Job-based report retrieval API routes."""
 
-from pathlib import Path
 import secrets
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 
 from backend.dependencies import (
@@ -22,10 +22,10 @@ from backend.schemas import (
 )
 from config.settings import Settings
 from services.models import (
+    SAFE_PROGRESS_MESSAGES,
     ProgressStage,
     ReportRetrievalOutcome,
     RetrievalOutcomeStatus,
-    SAFE_PROGRESS_MESSAGES,
 )
 from services.report_retrieval import ReportRetrievalService
 from utils.file_utils import (
@@ -37,7 +37,6 @@ from utils.file_utils import (
 )
 from utils.logger import get_logger
 
-
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/jobs", tags=["report jobs"])
 
@@ -48,12 +47,18 @@ router = APIRouter(prefix="/api/v1/jobs", tags=["report jobs"])
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_job(
+    request: Request,
     slip: UploadFile = File(...),
     settings: Settings = Depends(get_backend_settings),
     store: JobStore = Depends(get_job_store),
     runner: JobRunner = Depends(get_job_runner),
     service: ReportRetrievalService = Depends(get_report_retrieval_service),
 ) -> JobCreatedResponse:
+    if not request.app.state.accepting_jobs:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The report service is shutting down.",
+        )
     maximum_bytes = settings.max_upload_mb * 1024 * 1024
     file_data = await slip.read(maximum_bytes + 1)
     if len(file_data) > maximum_bytes:

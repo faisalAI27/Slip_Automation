@@ -8,6 +8,9 @@ This application is intended only for retrieving reports that the user or patien
 
 ## Run the FastAPI backend
 
+For the production Docker image and single-instance deployment boundary, see
+[`DEPLOYMENT.md`](DEPLOYMENT.md).
+
 The API calls the same UI-independent application service used by Streamlit; it does
 not move or duplicate the document, planning, browser, or download engines. The first
 backend uses a thread-safe in-memory job store and a bounded local thread pool. It is a
@@ -92,6 +95,7 @@ Environment access is centralized in `config/settings.py`.
 |---|---:|---|
 | `APP_ENV` | `development` | Environment label shown in debug mode |
 | `DEBUG_MODE` | `false` | Enables the local developer-details section |
+| `PORT` | `8000` | FastAPI container listening port |
 | `TEMP_DIR` | `temp` | Temporary uploaded-image directory |
 | `TEMP_FILE_MAX_AGE_HOURS` | `24` | Age after which stale temporary files are removed |
 | `MAX_UPLOAD_MB` | `12` | Per-image upload limit |
