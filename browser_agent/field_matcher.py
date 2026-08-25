@@ -138,6 +138,8 @@ def _page_category(field: InputFieldObservation) -> str:
         return "access_credential"
     if "birth" in tokens:
         return "date_of_birth"
+    if "invoice" in tokens:
+        return "reference_identifier"
     if "email" in tokens:
         return "email"
     if tokens & {"phone", "mobile", "telephone"}:
@@ -164,14 +166,16 @@ def _document_category(field: SafeDocumentField) -> str:
     label_tokens = _tokens(field.label)
     if "birth" in label_tokens:
         return "date_of_birth"
+    if semantic in {"date", "registration_date", "collection_date", "report_date"}:
+        return "date"
+    if "invoice" in label_tokens:
+        return "reference_identifier"
     if "patient" in label_tokens and "credential" not in label_tokens:
         return "patient_identifier"
     if semantic in IDENTIFIER_CATEGORIES:
         return semantic
     if semantic == "access_credential":
         return semantic
-    if semantic in {"date", "registration_date", "collection_date", "report_date"}:
-        return "date"
     return semantic
 
 

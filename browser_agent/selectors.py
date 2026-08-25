@@ -71,7 +71,7 @@ PAGE_SNAPSHOT_SCRIPT = r"""
     });
 
   const buttons = Array.from(
-    document.querySelectorAll('button, input[type="submit"], input[type="button"], input[type="reset"], [role="button"]')
+    document.querySelectorAll('button, input[type="submit"], input[type="button"], input[type="reset"], [role="button"], [onclick]')
   )
     .filter((element) => {
       if (!visible(element)) return false;

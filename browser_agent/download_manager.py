@@ -2,9 +2,10 @@
 
 from pathlib import Path
 import uuid
+from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 from browser_agent.errors import DownloadValidationError
-from browser_agent.models import DownloadedFile
+from browser_agent.models import DownloadedFile, DownloadedReportFile
 from utils.file_utils import ensure_temp_directory
 from utils.logger import get_logger
 
@@ -13,6 +14,7 @@ logger = get_logger(__name__)
 PDF_SIGNATURE = b"%PDF"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 JPEG_SIGNATURE = b"\xff\xd8\xff"
+ZIP_SIGNATURE = b"PK\x03\x04"
 
 
 class ReportDownloadManager:
@@ -82,6 +84,77 @@ class ReportDownloadManager:
             self._remove_if_allowed(resolved)
             raise DownloadValidationError(
                 "The downloaded report could not be validated."
+            ) from exc
+
+    def bundle_reports(self, reports: list[DownloadedFile]) -> DownloadedFile:
+        if not reports:
+            raise DownloadValidationError("No validated reports were available to bundle.")
+        if len(reports) == 1:
+            return reports[0]
+
+        report_paths = [Path(item.path).resolve() for item in reports]
+        if any(
+            path.parent != self._temp_dir or not path.is_file()
+            for path in report_paths
+        ):
+            raise DownloadValidationError(
+                "A validated report was no longer available for bundling."
+            )
+        if sum(path.stat().st_size for path in report_paths) > self._max_bytes:
+            raise DownloadValidationError(
+                "The combined reports exceed the configured download size limit."
+            )
+
+        bundle_path = self._temp_dir / f"lab_reports_{uuid.uuid4().hex}.zip"
+        try:
+            with ZipFile(bundle_path, "w", compression=ZIP_DEFLATED) as archive:
+                for index, path in enumerate(report_paths, 1):
+                    suffix = path.suffix.casefold()
+                    if suffix not in {".pdf", ".png", ".jpg", ".jpeg"}:
+                        raise DownloadValidationError(
+                            "A report has an unsupported bundled file type."
+                        )
+                    archive.write(path, arcname=f"latest_report_{index}{suffix}")
+            size = bundle_path.stat().st_size
+            if size <= 0 or size > self._max_bytes:
+                raise DownloadValidationError(
+                    "The combined report download is empty or exceeds the size limit."
+                )
+            with bundle_path.open("rb") as handle:
+                if not handle.read(len(ZIP_SIGNATURE)).startswith(ZIP_SIGNATURE):
+                    raise DownloadValidationError(
+                        "The combined report download is not a valid ZIP archive."
+                    )
+            with ZipFile(bundle_path) as archive:
+                if archive.testzip() is not None:
+                    raise DownloadValidationError(
+                        "The combined report download contains a damaged file."
+                    )
+            logger.info("Controlled report bundle validated")
+            return DownloadedFile(
+                path=str(bundle_path),
+                media_type="application/zip",
+                size_bytes=size,
+                validation_status="validated",
+                report_count=len(reports),
+                individual_reports=[
+                    DownloadedReportFile(
+                        path=item.path,
+                        media_type=item.media_type,
+                        size_bytes=item.size_bytes,
+                        validation_status=item.validation_status,
+                        display_name=item.display_name,
+                    )
+                    for item in reports
+                ],
+            )
+        except DownloadValidationError:
+            self._remove_if_allowed(bundle_path)
+            raise
+        except (BadZipFile, OSError) as exc:
+            self._remove_if_allowed(bundle_path)
+            raise DownloadValidationError(
+                "The combined reports could not be bundled safely."
             ) from exc
 
     def _remove_if_allowed(self, path: Path) -> None:

@@ -43,6 +43,7 @@ ALLOWED_BUTTON_ACTIONS = {
     ButtonSemanticAction.CONTINUE,
     ButtonSemanticAction.VIEW_REPORT,
     ButtonSemanticAction.DOWNLOAD,
+    ButtonSemanticAction.SEARCH,
 }
 ALLOWED_LINK_PURPOSES = {
     LinkPurpose.PATIENT_PORTAL,
@@ -76,13 +77,20 @@ class RetrievalToolset(Protocol):
 
     def click(self, action: AgentAction, observation: BrowserObservation) -> BrowserObservation: ...
 
-    def wait(self, action: AgentAction) -> BrowserObservation: ...
+    def wait(
+        self,
+        action: AgentAction,
+        *,
+        capture_report_navigation: bool = False,
+    ) -> BrowserObservation: ...
 
     def go_back(self, action: AgentAction) -> BrowserObservation: ...
 
     def download(
         self, action: AgentAction, observation: BrowserObservation
     ) -> DownloadedFile: ...
+
+    def bundle_downloads(self, reports: list[DownloadedFile]) -> DownloadedFile: ...
 
 
 def _tokens(value: str | None) -> set[str]:
@@ -139,8 +147,14 @@ class SearchResultRanker:
 
 
 class InteractionSafetyValidator:
-    def __init__(self, field_store: DocumentFieldStore) -> None:
+    def __init__(
+        self,
+        field_store: DocumentFieldStore,
+        *,
+        allow_insecure_http: bool = False,
+    ) -> None:
         self._field_store = field_store
+        self._allow_insecure_http = allow_insecure_http
 
     def validate_fill(
         self,
@@ -178,7 +192,7 @@ class InteractionSafetyValidator:
         destination = validate_public_url(current_url)
         # Every value sourced from a medical document or supplied at this boundary
         # is treated as sensitive, including dates and organization-specific fields.
-        if not destination.uses_https:
+        if not destination.uses_https and not self._allow_insecure_http:
             raise InteractionSafetyError(
                 "Sensitive document information cannot be entered over HTTP."
             )
@@ -245,13 +259,18 @@ class ControlledBrowserTools:
         *,
         inspector: PageInspector | None = None,
         search_provider: SearchProvider | None = None,
+        allow_insecure_http: bool = False,
     ) -> None:
         self._session = session
         self._field_store = field_store
         self._download_manager = download_manager
         self._inspector = inspector or PageInspector()
         self._search_provider = search_provider or DuckDuckGoSearchProvider()
-        self._validator = InteractionSafetyValidator(field_store)
+        self._allow_insecure_http = allow_insecure_http
+        self._validator = InteractionSafetyValidator(
+            field_store,
+            allow_insecure_http=allow_insecure_http,
+        )
         self._trusted_domains: set[str] = set()
         self._warnings: list[str] = []
 
@@ -341,15 +360,31 @@ class ControlledBrowserTools:
                 }
                 for item in updated.download_candidates
             )
-            if (
-                updated.page_type == PageType.REPORT_VIEWER
-                and media_type in {None, "text/html", "application/xhtml+xml"}
+            opened_from_report_action = bool(
+                getattr(self._session, "current_page_from_report_action", False)
+            )
+            if opened_from_report_action and updated.page_type in {
+                PageType.REPORT_VIEWER,
+                PageType.UNKNOWN,
+            } and (
+                media_type in {None, "text/html", "application/xhtml+xml"}
                 and not has_direct_report
                 and not any(
                     item.kind == DownloadCandidateKind.PRINTABLE_PAGE
                     for item in updated.download_candidates
                 )
             ):
+                if updated.page_type == PageType.UNKNOWN:
+                    updated = updated.model_copy(
+                        update={
+                            "page_type": PageType.REPORT_VIEWER,
+                            "authentication_signals": AuthenticationSignals(
+                                authentication_required=False,
+                                field_count=0,
+                                confidence=ConfidenceLevel.LOW,
+                            ),
+                        }
+                    )
                 printable = DownloadCandidate(
                     element_id="printable_page_1",
                     label="Printable PDF report",
@@ -403,6 +438,12 @@ class ControlledBrowserTools:
         )
         assert action.element_id and action.document_field_ref
         value = self._field_store.resolve(action.document_field_ref)
+        destination = validate_public_url(self._session.current_url)
+        if not destination.uses_https and self._allow_insecure_http:
+            self._warnings.append(
+                "The report portal uses unencrypted HTTP; information sent to it "
+                "may be exposed in transit."
+            )
         try:
             self._session.fill_field(action.element_id, value)
         except ElementUnavailableError:
@@ -424,15 +465,64 @@ class ControlledBrowserTools:
         self._validator.validate_click(action, observation)
         source_domain = self.current_domain
         assert action.element_id
+        clicked_button = next(
+            (
+                item
+                for item in observation.buttons
+                if item.element_id == action.element_id
+            ),
+            None,
+        )
+        clicked_link = next(
+            (
+                item
+                for item in observation.links
+                if item.element_id == action.element_id
+            ),
+            None,
+        )
+        report_navigation = observation.page_type == PageType.REPORT_LIST_PAGE and (
+            (
+                clicked_button is not None
+                and clicked_button.semantic_action == ButtonSemanticAction.VIEW_REPORT
+            )
+            or (
+                clicked_link is not None
+                and clicked_link.likely_purpose
+                in {LinkPurpose.REPORTS, LinkPurpose.RESULTS}
+            )
+        )
         try:
-            self._session.click(action.element_id)
+            self._session.click(
+                action.element_id,
+                capture_report_navigation=report_navigation,
+            )
         except ElementUnavailableError:
             refreshed = self.inspect_page()
             self._validator.validate_click(action, refreshed)
             self._warnings.append(
                 "A webpage action changed and was safely re-inspected once."
             )
-            self._session.click(action.element_id)
+            self._session.click(
+                action.element_id,
+                capture_report_navigation=report_navigation,
+            )
+        # Legacy form-post portals can briefly replace their DOM before the
+        # authenticated results are rendered. Inspecting that transitional DOM
+        # can interfere with client-side postback handlers, so allow one short
+        # bounded settle window after a credential form submission.
+        if observation.authentication_signals.authentication_required:
+            self._session.wait(3.0, capture_report_events=True)
+        elif report_navigation:
+            # Older portals often schedule their report popup after the click
+            # handler returns. Keep the capture window open briefly so the popup
+            # can be validated and adopted instead of being mistaken for an
+            # unchanged results list.
+            self._session.wait(
+                2.0,
+                capture_report_events=True,
+                capture_report_navigation=True,
+            )
         destination = validate_public_url(self._session.current_url)
         if source_domain in self._trusted_domains:
             self._trusted_domains.add(destination.domain)
@@ -449,10 +539,19 @@ class ControlledBrowserTools:
             )
             return self.inspect_page()
 
-    def wait(self, action: AgentAction) -> BrowserObservation:
+    def wait(
+        self,
+        action: AgentAction,
+        *,
+        capture_report_navigation: bool = False,
+    ) -> BrowserObservation:
         if action.type != AgentActionType.WAIT or action.wait_seconds is None:
             raise InteractionSafetyError("Only a structured bounded wait is permitted.")
-        self._session.wait(action.wait_seconds, capture_report_events=True)
+        self._session.wait(
+            action.wait_seconds,
+            capture_report_events=True,
+            capture_report_navigation=capture_report_navigation,
+        )
         return self.inspect_page()
 
     def go_back(self, action: AgentAction) -> BrowserObservation:
@@ -471,9 +570,12 @@ class ControlledBrowserTools:
     ) -> DownloadedFile:
         self._validator.validate_download(action, observation)
         destination = validate_public_url(self._session.current_url)
-        if not destination.uses_https or destination.domain not in self._trusted_domains:
+        if (
+            (not destination.uses_https and not self._allow_insecure_http)
+            or destination.domain not in self._trusted_domains
+        ):
             raise InteractionSafetyError(
-                "A report can only be downloaded from a trusted HTTPS workflow domain."
+                "A report can only be downloaded from a trusted workflow domain."
             )
         assert action.element_id
         staged = self._download_manager.staging_path()
@@ -483,6 +585,7 @@ class ControlledBrowserTools:
                 staged,
                 allowed_domains=self._trusted_domains,
                 max_bytes=self._download_manager.max_bytes,
+                allow_insecure_http=self._allow_insecure_http,
             )
         except ElementUnavailableError:
             original = next(
@@ -523,5 +626,9 @@ class ControlledBrowserTools:
                 staged,
                 allowed_domains=self._trusted_domains,
                 max_bytes=self._download_manager.max_bytes,
+                allow_insecure_http=self._allow_insecure_http,
             )
         return self._download_manager.validate_report(staged)
+
+    def bundle_downloads(self, reports: list[DownloadedFile]) -> DownloadedFile:
+        return self._download_manager.bundle_reports(reports)

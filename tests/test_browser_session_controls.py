@@ -3,6 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from browser_agent.session import BrowserSession, BrowserSessionConfig
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 
 class _Download:
@@ -19,12 +20,20 @@ class _Download:
 
 
 class _Page:
-    def __init__(self, url: str = "https://example.test/") -> None:
+    def __init__(
+        self,
+        url: str = "https://example.test/",
+        *,
+        load_state_times_out: bool = False,
+    ) -> None:
         self.url = url
+        self.main_frame = object()
         self.closed = False
         self.handlers: list[str] = []
         self.locator_value: _Locator | None = None
         self.wait_callback = None
+        self.load_state_times_out = load_state_times_out
+        self.load_state_timeouts: list[float] = []
         self.pdf_body = b"%PDF-1.7\nprinted report"
 
     def on(self, event: str, _handler: object) -> None:
@@ -41,6 +50,9 @@ class _Page:
             self.wait_callback()
 
     def wait_for_load_state(self, _state: str, *, timeout: float) -> None:
+        self.load_state_timeouts.append(timeout)
+        if self.load_state_times_out:
+            raise PlaywrightTimeoutError("synthetic popup load timeout")
         return None
 
     def emulate_media(self, *, media: str) -> None:
@@ -51,9 +63,19 @@ class _Page:
 
 
 class _Locator:
-    def __init__(self, on_click=None, resource=None) -> None:
+    def __init__(
+        self,
+        on_click=None,
+        resource=None,
+        *,
+        legacy_onclick: bool = False,
+        click_times_out: bool = False,
+    ) -> None:
         self.on_click = on_click
         self.resource = resource
+        self.legacy_onclick = legacy_onclick
+        self.click_times_out = click_times_out
+        self.dispatched = False
 
     def count(self) -> int:
         return 1
@@ -65,10 +87,27 @@ class _Locator:
         return True
 
     def click(self) -> None:
+        if self.click_times_out:
+            raise PlaywrightTimeoutError("synthetic actionability timeout")
+        if self.on_click:
+            self.on_click()
+
+    def get_attribute(self, name: str) -> str | None:
+        if name == "onclick" and self.legacy_onclick:
+            return "showReport()"
+        return None
+
+    def dispatch_event(self, event: str) -> None:
+        self.dispatched = event == "click"
         if self.on_click:
             self.on_click()
 
     def evaluate(self, _script: str):
+        if "element.click" in _script:
+            self.dispatched = True
+            if self.on_click:
+                self.on_click()
+            return None
         return self.resource
 
 
@@ -143,6 +182,107 @@ class _Route:
 
 
 class BrowserSessionControlTests(unittest.TestCase):
+    def test_expected_report_popup_may_bootstrap_with_about_blank(self) -> None:
+        page = _Page("https://reports.example.test/list")
+        session = BrowserSession(BrowserSessionConfig())
+        session._page = page  # type: ignore[attr-defined]
+        session._expected_popup = True  # type: ignore[attr-defined]
+        session._expected_report_navigation = True  # type: ignore[attr-defined]
+        route = _Route(_RouteRequest("about:blank", page))
+
+        session._route_request(route)  # type: ignore[arg-type,attr-defined]
+
+        self.assertTrue(route.continued)
+        self.assertFalse(route.aborted)
+
+    def test_unexpected_about_blank_navigation_remains_blocked(self) -> None:
+        page = _Page("https://reports.example.test/list")
+        session = BrowserSession(BrowserSessionConfig())
+        session._page = page  # type: ignore[attr-defined]
+        route = _Route(_RouteRequest("about:blank", page))
+
+        session._route_request(route)  # type: ignore[arg-type,attr-defined]
+
+        self.assertTrue(route.aborted)
+        self.assertFalse(route.continued)
+
+    def test_transient_report_popup_is_bounded_and_retained_for_delayed_report(self) -> None:
+        session = BrowserSession(BrowserSessionConfig(navigation_timeout_seconds=45))
+        session._page = _Page("https://reports.example.test/list")  # type: ignore[attr-defined]
+        popup = _Page("about:blank", load_state_times_out=True)
+        session._pending_popup = popup  # type: ignore[attr-defined]
+
+        adopted = session._adopt_pending_popup()  # type: ignore[attr-defined]
+
+        self.assertFalse(adopted)
+        self.assertIs(session._pending_popup, popup)  # type: ignore[attr-defined]
+        self.assertEqual(popup.load_state_timeouts, [2_000])
+        self.assertFalse(popup.closed)
+
+    def test_report_frame_in_transient_popup_is_bound_to_validated_opener(self) -> None:
+        session = BrowserSession(
+            BrowserSessionConfig(),
+            resolver=lambda _host, _port: ["93.184.216.34"],
+        )
+        opener = _Page("https://reports.example.test/list")
+        popup = _Page("about:blank")
+        session._page = opener  # type: ignore[attr-defined]
+        session._pending_popup = popup  # type: ignore[attr-defined]
+        session._expected_report_navigation = True  # type: ignore[attr-defined]
+        response = type(
+            "FrameResponse",
+            (),
+            {
+                "request": type(
+                    "Request",
+                    (),
+                    {"resource_type": "document", "method": "GET"},
+                )(),
+                "frame": object(),
+                "url": "https://reports.example.test/report/view?id=redacted",
+                "status": 200,
+                "headers": {"content-type": "text/html; charset=utf-8"},
+            },
+        )()
+
+        session._handle_response(popup, response)  # type: ignore[arg-type,attr-defined]
+
+        self.assertEqual(
+            session._pending_report_document_url,  # type: ignore[attr-defined]
+            "https://reports.example.test/report/view?id=redacted",
+        )
+
+    def test_expected_same_domain_report_frame_is_staged_for_reopen(self) -> None:
+        session = BrowserSession(
+            BrowserSessionConfig(),
+            resolver=lambda _host, _port: ["93.184.216.34"],
+        )
+        page = _Page("https://reports.example.test/list")
+        response = type(
+            "FrameResponse",
+            (),
+            {
+                "request": type(
+                    "Request",
+                    (),
+                    {"resource_type": "document", "method": "GET"},
+                )(),
+                "frame": object(),
+                "url": "https://reports.example.test/report/view?id=redacted",
+                "status": 200,
+                "headers": {"content-type": "text/html; charset=utf-8"},
+            },
+        )()
+        session._page = page  # type: ignore[attr-defined]
+        session._expected_report_navigation = True  # type: ignore[attr-defined]
+
+        session._handle_response(page, response)  # type: ignore[arg-type,attr-defined]
+
+        self.assertEqual(
+            session._pending_report_document_url,  # type: ignore[attr-defined]
+            "https://reports.example.test/report/view?id=redacted",
+        )
+
     def test_configured_http_navigation_is_blocked_and_rewritten_to_https(self) -> None:
         page = _Page("https://secure.example.test/login")
         session = BrowserSession(
@@ -244,10 +384,46 @@ class BrowserSessionControlTests(unittest.TestCase):
         )
         session._page = current  # type: ignore[attr-defined]
 
-        session.click("button_1")
+        session.click("button_1", capture_report_navigation=True)
 
         self.assertIs(session.page, popup)
         self.assertFalse(popup.closed)
+        self.assertTrue(session.current_page_from_report_action)
+
+        session.go_back()
+
+        self.assertIs(session.page, current)
+        self.assertTrue(popup.closed)
+        self.assertFalse(session.current_page_from_report_action)
+
+    def test_same_page_validated_report_click_marks_report_origin(self) -> None:
+        session = BrowserSession(
+            BrowserSessionConfig(),
+            resolver=lambda _host, _port: ["93.184.216.34"],
+        )
+        current = _Page("https://reports.example.test/list")
+        current.locator_value = _Locator()
+        session._page = current  # type: ignore[attr-defined]
+
+        session.click("link_1", capture_report_navigation=True)
+
+        self.assertIs(session.page, current)
+        self.assertTrue(session.current_page_from_report_action)
+
+    def test_legacy_onclick_control_uses_bounded_direct_event_fallback(self) -> None:
+        session = BrowserSession(
+            BrowserSessionConfig(),
+            resolver=lambda _host, _port: ["93.184.216.34"],
+        )
+        page = _Page("https://reports.example.test/list")
+        locator = _Locator(legacy_onclick=True, click_times_out=True)
+        page.locator_value = locator
+        session._page = page  # type: ignore[attr-defined]
+
+        session.click("button_1")
+
+        self.assertTrue(locator.dispatched)
+        self.assertIn("legacy", " ".join(session.warnings).casefold())
 
     def test_embedded_https_report_is_fetched_with_browser_cookies(self) -> None:
         session = BrowserSession(
@@ -442,6 +618,26 @@ class BrowserSessionControlTests(unittest.TestCase):
 
         self.assertTrue(session.has_pending_report_download)
         self.assertFalse(download.cancelled)
+
+    def test_bounded_report_wait_keeps_transient_frame_capture_active(self) -> None:
+        session = BrowserSession(BrowserSessionConfig())
+        page = _Page()
+        capture_states: list[bool] = []
+        page.wait_callback = lambda: capture_states.append(
+            session._expected_report_navigation  # type: ignore[attr-defined]
+        )
+        session._page = page  # type: ignore[attr-defined]
+
+        session.wait(
+            1.0,
+            capture_report_events=True,
+            capture_report_navigation=True,
+        )
+
+        self.assertEqual(capture_states, [True])
+        self.assertFalse(
+            session._expected_report_navigation  # type: ignore[attr-defined]
+        )
 
 
 if __name__ == "__main__":

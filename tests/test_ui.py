@@ -1,12 +1,17 @@
 import unittest
 from copy import deepcopy
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
+
+from PIL import Image
 
 from browser_agent.models import (
     AuthenticationSignals,
     BrowserActionResult,
     BrowserObservation,
+    DownloadedFile,
+    DownloadedReportFile,
     PageType,
     RetrievalResult,
     RetrievalStatus,
@@ -262,7 +267,9 @@ _render_developer_details(settings)
         settings = get_settings()
         settings.temp_dir.mkdir(parents=True, exist_ok=True)
         report_path = settings.temp_dir / "lab_report_ui_test.png"
-        report_path.write_bytes(b"\x89PNG\r\n\x1a\nsynthetic test report")
+        buffer = BytesIO()
+        Image.new("RGB", (2, 2), "white").save(buffer, format="PNG")
+        report_path.write_bytes(buffer.getvalue())
         try:
             app = AppTest.from_file(app_path)
             app.session_state["workflow_state"] = WorkflowState.DOWNLOAD_READY
@@ -278,6 +285,103 @@ _render_developer_details(settings)
             )
         finally:
             report_path.unlink(missing_ok=True)
+
+    def test_validated_report_bundle_is_exposed_as_one_download(self) -> None:
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        settings = get_settings()
+        settings.temp_dir.mkdir(parents=True, exist_ok=True)
+        report_path = settings.temp_dir / "lab_reports_ui_test.zip"
+        report_path.write_bytes(b"PK\x03\x04synthetic report bundle")
+        try:
+            app = AppTest.from_file(app_path)
+            app.session_state["workflow_state"] = WorkflowState.DOWNLOAD_READY
+            app.session_state["resulting_file_path"] = str(report_path)
+            app.session_state["resulting_report_count"] = 7
+
+            app.run(timeout=15)
+
+            self.assertFalse(app.exception)
+            self.assertIn(
+                "Your 7 latest reports are ready.",
+                [item.value for item in app.success],
+            )
+            self.assertEqual(len(app.get("download_button")), 1)
+            self.assertEqual(
+                app.get("download_button")[0].label,
+                "Download all latest reports (ZIP)",
+            )
+        finally:
+            report_path.unlink(missing_ok=True)
+
+    def test_tied_latest_reports_each_have_view_and_download_controls(self) -> None:
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        settings = get_settings()
+        settings.temp_dir.mkdir(parents=True, exist_ok=True)
+        report_one = settings.temp_dir / "lab_report_ui_esr.pdf"
+        report_two = settings.temp_dir / "lab_report_ui_albumin.pdf"
+        bundle_path = settings.temp_dir / "lab_reports_ui_latest.zip"
+        report_one.write_bytes(b"%PDF-1.7\nsynthetic ESR report")
+        report_two.write_bytes(b"%PDF-1.7\nsynthetic albumin report")
+        bundle_path.write_bytes(b"PK\x03\x04synthetic report bundle")
+        retrieval = RetrievalResult(
+            status=RetrievalStatus.DOWNLOADED,
+            downloaded_file=DownloadedFile(
+                path=str(bundle_path),
+                media_type="application/zip",
+                size_bytes=bundle_path.stat().st_size,
+                report_count=2,
+                individual_reports=[
+                    DownloadedReportFile(
+                        path=str(report_one),
+                        size_bytes=report_one.stat().st_size,
+                        display_name="ESR",
+                    ),
+                    DownloadedReportFile(
+                        path=str(report_two),
+                        size_bytes=report_two.stat().st_size,
+                        display_name="Albumin",
+                    ),
+                ],
+            ),
+            final_page_type=PageType.REPORT_VIEWER,
+            current_domain="example.test",
+            steps_completed=4,
+            user_input_requirement=RetrievalUserInputRequirement(
+                required=False,
+                reason=None,
+                requested_information=[],
+            ),
+            warnings=[],
+            failure_reason=None,
+            safe_action_history=[],
+            field_mappings=[],
+        )
+        try:
+            app = AppTest.from_file(app_path)
+            app.session_state["workflow_state"] = WorkflowState.DOWNLOAD_READY
+            app.session_state["resulting_file_path"] = str(bundle_path)
+            app.session_state["resulting_report_count"] = 2
+            app.session_state["retrieval_result"] = retrieval.model_dump(mode="json")
+
+            app.run(timeout=15)
+
+            self.assertFalse(app.exception)
+            self.assertEqual(
+                [item.label for item in app.expander],
+                ["View ESR", "View Albumin"],
+            )
+            self.assertEqual(
+                [item.label for item in app.get("download_button")],
+                [
+                    "Download ESR",
+                    "Download Albumin",
+                    "Download all latest reports (ZIP)",
+                ],
+            )
+        finally:
+            report_one.unlink(missing_ok=True)
+            report_two.unlink(missing_ok=True)
+            bundle_path.unlink(missing_ok=True)
 
     def test_browser_failure_offers_prefilled_optional_url_recovery(self) -> None:
         app_path = Path(__file__).resolve().parents[1] / "app.py"

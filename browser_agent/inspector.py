@@ -83,6 +83,32 @@ def _report_date(*values: object) -> date | None:
     return max(found) if found else None
 
 
+def _report_label(context: object, action_text: object) -> str | None:
+    value = _clean_text(context)
+    if not value:
+        return None
+    cleaned = value
+    date_patterns = (
+        r"\b20\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])\b",
+        r"\b(?:0?[1-9]|[12]\d|3[01])[-/.](?:0?[1-9]|1[0-2])[-/.](?:19|20)\d{2}\b",
+        r"\b(?:0?[1-9]|[12]\d|3[01])(?:[-/.]|\s+)[A-Za-z]{3,9},?(?:[-/.]|\s+)(?:19|20)\d{2}\b",
+    )
+    for pattern in date_patterns:
+        cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+    action = _clean_text(action_text)
+    if action:
+        cleaned = re.sub(re.escape(action), " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\b(?:view|open|download|report|result|actions?|booking\s+date)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"^\s*(?:s\.?\s*no\.?)?\s*\d+\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -·|:")
+    return cleaned[:120] if cleaned else None
+
+
 def _likely_file_type(*values: object) -> str | None:
     combined = _combined_text(*values)
     if "application/pdf" in combined or re.search(r"\.pdf(?:[?#]|$)", combined):
@@ -105,6 +131,8 @@ def _button_action(text: object, html_type: object, context: object = None) -> B
         return ButtonSemanticAction.DOWNLOAD
     if any(term in combined for term in ("view report", "view result", "show report")):
         return ButtonSemanticAction.VIEW_REPORT
+    if text_only in {"report", "result"}:
+        return ButtonSemanticAction.VIEW_REPORT
     if text_only in {"view", "preview", "open"} and any(
         term in combined for term in ("report", "result", "test", "investigation", "laboratory")
     ):
@@ -123,6 +151,13 @@ def _button_action(text: object, html_type: object, context: object = None) -> B
 def _link_purpose(text: object, url: object, context: object = None) -> LinkPurpose:
     combined = _combined_text(text, url, context)
     text_only = _combined_text(text)
+    # Visible action text is more reliable than legacy route names. Some
+    # portals call their HTML viewer endpoint `downloadReport` even though the
+    # control opens a report page and does not download a file.
+    if any(
+        term in text_only for term in ("view report", "view result", "show report")
+    ) or text_only in {"report", "result"}:
+        return LinkPurpose.REPORTS
     if any(term in combined for term in ("download", ".pdf", ".png", ".jpg", ".jpeg", "save report")):
         return LinkPurpose.DOWNLOAD
     if any(term in combined for term in ("patient portal", "patient login")):
@@ -244,6 +279,7 @@ def _authentication_signals(
         "code",
         "credential",
         "id",
+        "invoice",
         "login",
         "mr",
         "mrn",
@@ -277,6 +313,7 @@ def _authentication_signals(
         button.semantic_action
         in {
             ButtonSemanticAction.LOGIN,
+            ButtonSemanticAction.SEARCH,
             ButtonSemanticAction.SUBMIT,
             ButtonSemanticAction.VIEW_REPORT,
         }
@@ -316,6 +353,16 @@ def _page_type(
 ) -> PageType:
     combined = _combined_text(final_url, title, summary)
     hostname = (urlsplit(final_url).hostname or "").casefold()
+    report_list_language = any(
+        term in combined
+        for term in (
+            "available reports",
+            "latest reports",
+            "report history",
+            "reports history",
+            "report list",
+        )
+    )
     if verification.verification_required:
         return PageType.VERIFICATION_PAGE
     if "duckduckgo." in hostname:
@@ -325,8 +372,58 @@ def _page_type(
         for term in ("error", "not found", "unavailable", "expired", "invalid")
     ):
         return PageType.ERROR_PAGE
+    if report_list_language and (
+        downloads
+        or any(
+            button.semantic_action == ButtonSemanticAction.VIEW_REPORT
+            for button in buttons
+        )
+        or any(
+            link.likely_purpose
+            in {LinkPurpose.REPORTS, LinkPurpose.RESULTS, LinkPurpose.DOWNLOAD}
+            for link in links
+        )
+    ):
+        return PageType.REPORT_LIST_PAGE
+    # Some portals keep the login/search form visible after returning results.  A
+    # dated report action is strong evidence that the results table is present;
+    # an undated "View Reports" submit button alone is still just a login action.
+    if any(
+        button.semantic_action == ButtonSemanticAction.VIEW_REPORT
+        and button.report_date is not None
+        for button in buttons
+    ) and any(term in combined for term in ("report", "result", "laboratory")):
+        return PageType.REPORT_LIST_PAGE
+    if any(
+        link.likely_purpose
+        in {LinkPurpose.REPORTS, LinkPurpose.RESULTS, LinkPurpose.DOWNLOAD}
+        and link.report_date is not None
+        and (
+            link.likely_purpose != LinkPurpose.DOWNLOAD
+            or report_list_language
+        )
+        for link in links
+    ) and any(term in combined for term in ("report", "result", "laboratory")):
+        return PageType.REPORT_LIST_PAGE
+    # A portal may expose each row through a URL whose route contains
+    # "download", even though the visible page is still a dated report index.
+    # Classify those row-level actions before treating any downloadable resource
+    # as proof that the current page is the finished report.
+    if report_list_language and any(
+        item.report_date is not None
+        and item.kind in {DownloadCandidateKind.LINK, DownloadCandidateKind.BUTTON}
+        for item in downloads
+    ):
+        return PageType.REPORT_LIST_PAGE
+    if downloads and any(term in combined for term in ("report", "result", "pdf")):
+        return PageType.REPORT_VIEWER
     if authentication.authentication_required:
         return PageType.REPORT_LOGIN_PAGE
+    if report_list_language:
+        # The index shell can render before its asynchronous row actions. Keep it
+        # out of the printable-report path so the bounded agent wait can inspect
+        # it again instead of saving the empty/list page as a PDF.
+        return PageType.UNKNOWN
     if any(
         button.semantic_action == ButtonSemanticAction.VIEW_REPORT
         for button in buttons
@@ -337,8 +434,6 @@ def _page_type(
         for link in links
     ) and any(term in combined for term in ("reports", "results")):
         return PageType.REPORT_LIST_PAGE
-    if downloads and any(term in combined for term in ("report", "result", "pdf")):
-        return PageType.REPORT_VIEWER
     if any(
         term in combined
         for term in (
@@ -450,6 +545,7 @@ class PageInspector:
                     ),
                     form_reference=_clean_text(raw.get("formRef")),
                     report_date=_report_date(raw.get("context"), raw.get("text")),
+                    report_label=_report_label(raw.get("context"), raw.get("text")),
                 )
             )
 
@@ -478,29 +574,30 @@ class PageInspector:
                     same_domain=bool(final_domain and link_domain == final_domain),
                     likely_purpose=purpose,
                     report_date=_report_date(raw.get("context"), text),
+                    report_label=_report_label(raw.get("context"), text),
                 )
             )
 
         downloads: list[DownloadCandidate] = []
         for link in links:
             combined = _combined_text(link.text, link.url)
-            if link.likely_purpose == LinkPurpose.DOWNLOAD or any(
-                term in combined for term in (".pdf", "download", "save report")
-            ):
+            file_type = _likely_file_type(combined)
+            if link.likely_purpose == LinkPurpose.DOWNLOAD or file_type:
                 downloads.append(
                     DownloadCandidate(
                         element_id=link.element_id,
                         label=link.text or "Possible report download",
-                    kind=DownloadCandidateKind.LINK,
-                    likely_file_type=_likely_file_type(combined),
-                    confidence=(
-                        ConfidenceLevel.HIGH
-                        if _likely_file_type(combined) or "download" in combined
-                        else ConfidenceLevel.MEDIUM
-                    ),
-                    report_date=link.report_date,
+                        kind=DownloadCandidateKind.LINK,
+                        likely_file_type=file_type,
+                        confidence=(
+                            ConfidenceLevel.HIGH
+                            if file_type or link.likely_purpose == LinkPurpose.DOWNLOAD
+                            else ConfidenceLevel.MEDIUM
+                        ),
+                        report_date=link.report_date,
+                        report_label=link.report_label,
+                    )
                 )
-            )
         for button in buttons:
             if button.semantic_action == ButtonSemanticAction.DOWNLOAD:
                 downloads.append(
@@ -515,6 +612,7 @@ class PageInspector:
                         ),
                         confidence=ConfidenceLevel.MEDIUM,
                         report_date=button.report_date,
+                        report_label=button.report_label,
                     )
                 )
 
@@ -544,6 +642,7 @@ class PageInspector:
                     likely_file_type=file_type,
                     confidence=ConfidenceLevel.HIGH,
                     report_date=report_date,
+                    report_label=_report_label(raw.get("context"), None),
                 )
             )
 
@@ -562,6 +661,12 @@ class PageInspector:
             links=links,
             messages=messages,
         )
+        if page_type in {PageType.REPORT_LIST_PAGE, PageType.REPORT_VIEWER}:
+            authentication = AuthenticationSignals(
+                authentication_required=False,
+                field_count=0,
+                confidence=ConfidenceLevel.LOW,
+            )
         if verification.captcha_detected:
             warnings.append("A CAPTCHA is present and was not interacted with.")
         if verification.otp_detected:

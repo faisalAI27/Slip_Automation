@@ -57,8 +57,13 @@ class GeminiDocumentVisionProvider:
         model: str,
         timeout_seconds: float,
         reasoning_effort: str,
+        credential_focus_timeout_seconds: float = 12.0,
     ) -> None:
         self._model = model
+        self._credential_focus_timeout_seconds = max(
+            1.0,
+            min(timeout_seconds, credential_focus_timeout_seconds),
+        )
         self._reasoning_effort = reasoning_effort.strip().lower()
         if self._reasoning_effort not in ALLOWED_REASONING_EFFORTS:
             raise ProviderConfigurationError(
@@ -220,6 +225,7 @@ class GeminiDocumentVisionProvider:
                     messages=messages,
                     response_format=CredentialFocusResult,
                     reasoning_effort=self._reasoning_effort,
+                    timeout=self._credential_focus_timeout_seconds,
                 )
             )
             if not completion.choices:

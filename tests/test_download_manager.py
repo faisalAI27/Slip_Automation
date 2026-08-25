@@ -69,6 +69,25 @@ class DownloadManagerTests(unittest.TestCase):
             self.assertEqual(final.suffix, ".jpg")
             self.assertEqual(result.media_type, "image/jpeg")
 
+    def test_multiple_validated_reports_are_bundled_with_safe_names(self) -> None:
+        with TemporaryDirectory() as directory:
+            manager = ReportDownloadManager(Path(directory), max_download_mb=1)
+            reports = []
+            for body in (b"%PDF-1.7\nreport one", b"%PDF-1.7\nreport two"):
+                staged = manager.staging_path()
+                staged.write_bytes(body)
+                reports.append(manager.validate_report(staged))
+
+            result = manager.bundle_reports(reports)
+
+            bundle = Path(result.path)
+            self.assertTrue(bundle.exists())
+            self.assertEqual(bundle.suffix, ".zip")
+            self.assertEqual(result.media_type, "application/zip")
+            self.assertEqual(result.report_count, 2)
+            self.assertEqual(len(result.individual_reports), 2)
+            self.assertTrue(all(Path(item.path).exists() for item in reports))
+
 
 if __name__ == "__main__":
     unittest.main()

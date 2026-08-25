@@ -98,6 +98,7 @@ class ButtonObservation(StrictBrowserModel):
     semantic_action: ButtonSemanticAction
     form_reference: str | None = None
     report_date: date | None = None
+    report_label: str | None = None
 
 
 class LinkObservation(StrictBrowserModel):
@@ -108,6 +109,7 @@ class LinkObservation(StrictBrowserModel):
     same_domain: bool
     likely_purpose: LinkPurpose
     report_date: date | None = None
+    report_label: str | None = None
 
 
 class DownloadCandidate(StrictBrowserModel):
@@ -117,6 +119,7 @@ class DownloadCandidate(StrictBrowserModel):
     likely_file_type: str | None = None
     confidence: ConfidenceLevel
     report_date: date | None = None
+    report_label: str | None = None
 
 
 class AuthenticationSignals(StrictBrowserModel):
@@ -334,11 +337,17 @@ class UserProvidedField(StrictBrowserModel):
     semantic_type: str = "unknown"
 
 
-class DownloadedFile(StrictBrowserModel):
+class DownloadedReportFile(StrictBrowserModel):
     path: str = Field(min_length=1)
     media_type: str = "application/pdf"
     size_bytes: int = Field(gt=0)
     validation_status: str = "validated"
+    display_name: str | None = None
+
+
+class DownloadedFile(DownloadedReportFile):
+    report_count: int = Field(default=1, ge=1)
+    individual_reports: list[DownloadedReportFile] = Field(default_factory=list)
 
 
 class SafePageDiagnostics(StrictBrowserModel):

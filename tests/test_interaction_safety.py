@@ -125,6 +125,22 @@ class InteractionSafetyTests(unittest.TestCase):
                 trusted_domains={"example.test"},
             )
 
+    def test_explicit_legacy_http_opt_in_allows_trusted_form(self) -> None:
+        validator = InteractionSafetyValidator(
+            _store(),
+            allow_insecure_http=True,
+        )
+        with patch(
+            "browser_agent.interaction.validate_public_url",
+            return_value=_validated("http"),
+        ):
+            validator.validate_fill(
+                _fill(),
+                _observation(),
+                current_url="http://reports.example.test/login",
+                trusted_domains={"example.test"},
+            )
+
     def test_unknown_cross_domain_form_destination_is_blocked(self) -> None:
         validator = InteractionSafetyValidator(_store())
         with (
@@ -183,7 +199,7 @@ class InteractionSafetyTests(unittest.TestCase):
             DownloadCandidateKind.CURRENT_DOCUMENT,
         )
 
-    def test_html_report_viewer_becomes_printable_pdf_candidate(self) -> None:
+    def test_unvalidated_html_viewer_is_not_made_printable(self) -> None:
         class HtmlSession:
             page = object()
             current_document_media_type = "text/html"
@@ -213,14 +229,43 @@ class InteractionSafetyTests(unittest.TestCase):
 
             observation = tools.inspect_page()
 
-        self.assertEqual(len(observation.download_candidates), 1)
+        self.assertEqual(observation.download_candidates, [])
+
+    def test_unknown_html_child_from_validated_report_action_is_printable(self) -> None:
+        class ReportChildSession:
+            page = object()
+            current_document_media_type = "text/html"
+            current_page_from_report_action = True
+            has_pending_report_download = False
+            pending_report_file_type = None
+
+        class Inspector:
+            def inspect(self, _page: object) -> BrowserObservation:
+                return _observation().model_copy(
+                    update={
+                        "page_type": PageType.UNKNOWN,
+                        "authentication_signals": AuthenticationSignals(
+                            authentication_required=False,
+                            field_count=0,
+                            confidence=ConfidenceLevel.LOW,
+                        ),
+                    }
+                )
+
+        with TemporaryDirectory() as directory:
+            tools = ControlledBrowserTools(
+                ReportChildSession(),  # type: ignore[arg-type]
+                _store(),
+                ReportDownloadManager(Path(directory)),
+                inspector=Inspector(),  # type: ignore[arg-type]
+            )
+
+            observation = tools.inspect_page()
+
+        self.assertEqual(observation.page_type, PageType.REPORT_VIEWER)
         self.assertEqual(
             observation.download_candidates[0].kind,
             DownloadCandidateKind.PRINTABLE_PAGE,
-        )
-        self.assertEqual(
-            observation.download_candidates[0].element_id,
-            "printable_page_1",
         )
 
 

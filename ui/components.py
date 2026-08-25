@@ -93,9 +93,32 @@ def render_user_input_required() -> None:
     st.caption("Try a clearer, complete photo that includes the organization header.")
 
 
-def render_download_ready() -> None:
-    st.success("Your report is ready.", icon=":material/check_circle:")
-    st.caption("Download it below. The temporary copy is removed when you start over.")
+def render_download_ready(
+    report_count: int = 1,
+    *,
+    insecure_portal_used: bool = False,
+) -> None:
+    if report_count > 1:
+        st.success(
+            f"Your {report_count} latest reports are ready.",
+            icon=":material/check_circle:",
+        )
+        st.caption(
+            "View or download each newest-date report below. You can also download "
+            "all of them as one ZIP. Temporary copies are removed when you start over."
+        )
+    else:
+        st.success("Your report is ready.", icon=":material/check_circle:")
+        st.caption(
+            "View or download it below. The temporary copy is removed when you "
+            "start over."
+        )
+    if insecure_portal_used:
+        st.warning(
+            "The hospital supplied an unencrypted report portal. Information sent "
+            "to that website may be exposed in transit.",
+            icon=":material/warning:",
+        )
 
 
 def render_verification_required() -> None:

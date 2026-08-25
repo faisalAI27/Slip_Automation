@@ -106,6 +106,44 @@ class FieldMatcherTests(unittest.TestCase):
         self.assertTrue(result.actionable)
         self.assertTrue(all(item.confidence == ConfidenceLevel.HIGH for item in result.matches))
 
+    def test_invoice_number_matches_invoice_field_by_label(self) -> None:
+        store = DocumentFieldStore(
+            [
+                _document_field(
+                    "Invoice No",
+                    FieldSemanticType.REPORT_IDENTIFIER,
+                    "INV-123",
+                ),
+                _document_field(
+                    "Access Code",
+                    FieldSemanticType.ACCESS_CREDENTIAL,
+                    "CODE-456",
+                ),
+                _document_field(
+                    "Invoice Date",
+                    FieldSemanticType.DATE,
+                    "2026-08-20",
+                ),
+            ]
+        )
+
+        result = FieldMatcher().match(
+            store.descriptors,
+            [
+                _page_field("input_1", "Invoice No"),
+                _page_field("input_2", "Access Code"),
+            ],
+        )
+
+        self.assertTrue(result.actionable)
+        self.assertEqual(
+            {item.input_element_id for item in result.matches},
+            {"input_1", "input_2"},
+        )
+        self.assertTrue(
+            all(item.confidence == ConfidenceLevel.HIGH for item in result.matches)
+        )
+
     def test_ambiguous_identifiers_are_not_guessed(self) -> None:
         store = DocumentFieldStore(
             [

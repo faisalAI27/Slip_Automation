@@ -13,6 +13,8 @@ from browser_agent.models import (
     DownloadedFile,
     HtmlInputType,
     InputFieldObservation,
+    LinkObservation,
+    LinkPurpose,
     PageType,
     RetrievalStatus,
     SearchObservation,
@@ -47,6 +49,7 @@ def _observation(
     verification: bool = False,
     fields: list[InputFieldObservation] | None = None,
     buttons: list[ButtonObservation] | None = None,
+    links: list[LinkObservation] | None = None,
     downloads: list[DownloadCandidate] | None = None,
     messages: list[str] | None = None,
     summary: str = "Report service",
@@ -63,7 +66,7 @@ def _observation(
         forms=[],
         input_fields=fields or [],
         buttons=buttons or [],
-        links=[],
+        links=links or [],
         download_candidates=downloads or [],
         authentication_signals=authentication,
         verification_signals=verification_signals,
@@ -157,6 +160,7 @@ class FakeTools:
         self.fills: list[tuple[str, str]] = []
         self.clicks: list[str] = []
         self.downloads: list[str] = []
+        self.backs = 0
         self.waits: list[float] = []
         self.closed = False
         self.opened_url: str | None = None
@@ -197,14 +201,29 @@ class FakeTools:
         self.index = min(self.index + 1, len(self.observations) - 1)
         return self.observations[self.index]
 
-    def wait(self, action) -> BrowserObservation:
+    def wait(
+        self, action, *, capture_report_navigation: bool = False
+    ) -> BrowserObservation:
         self.waits.append(action.wait_seconds)
+        self.index = min(self.index + 1, len(self.observations) - 1)
+        return self.observations[self.index]
+
+    def go_back(self, _action) -> BrowserObservation:
+        self.backs += 1
         self.index = min(self.index + 1, len(self.observations) - 1)
         return self.observations[self.index]
 
     def download(self, action, _observation: BrowserObservation) -> DownloadedFile:
         self.downloads.append(action.element_id)
         return DownloadedFile(path="/tmp/generated.pdf", size_bytes=120)
+
+    def bundle_downloads(self, reports: list[DownloadedFile]) -> DownloadedFile:
+        return DownloadedFile(
+            path="/tmp/generated.zip",
+            media_type="application/zip",
+            size_bytes=sum(item.size_bytes for item in reports),
+            report_count=len(reports),
+        )
 
 
 class FailingPostClickTools(FakeTools):
@@ -292,8 +311,30 @@ class RetrievalAgentTests(unittest.TestCase):
         self.assertEqual(result.status, RetrievalStatus.USER_INPUT_REQUIRED)
         self.assertEqual(tools.clicks, ["button_1"])
         self.assertEqual(len(tools.fills), 2)
-        self.assertEqual(tools.waits, [2.0])
+        self.assertEqual(tools.waits, [2.0, 2.0, 2.0, 2.0])
         self.assertIn("remained on its login page", result.failure_reason)
+
+    def test_visible_login_form_is_observed_while_async_results_load(self) -> None:
+        tools = FakeTools(
+            [
+                _login(),
+                _observation(PageType.UNKNOWN, summary="Loading reports"),
+                _login(),
+                _login(),
+                _observation(
+                    PageType.REPORT_LIST_PAGE,
+                    downloads=[_download()],
+                ),
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
+        self.assertEqual(tools.clicks, ["button_1"])
+        self.assertEqual(len(tools.fills), 2)
+        self.assertEqual(tools.waits, [2.0, 2.0, 2.0])
+        self.assertEqual(tools.downloads, ["link_1"])
 
     def test_started_authentication_is_audited_when_inspection_fails(self) -> None:
         tools = FailingPostClickTools([_login()])
@@ -327,6 +368,35 @@ class RetrievalAgentTests(unittest.TestCase):
             [item.action_type.value for item in result.safe_action_history],
             ["open_url", "fill_field", "fill_field", "click", "wait", "download"],
         )
+
+    def test_unknown_page_after_report_portal_link_is_waited_for(self) -> None:
+        portal_button = ButtonObservation(
+            element_id="button_9",
+            text="Patient reports",
+            html_type="button",
+            disabled=False,
+            semantic_action=ButtonSemanticAction.VIEW_REPORT,
+        )
+        tools = FakeTools(
+            [
+                _observation(
+                    PageType.ORGANIZATION_HOMEPAGE,
+                    buttons=[portal_button],
+                ),
+                _observation(PageType.UNKNOWN, summary="Opening patient reports"),
+                _login(),
+                _observation(
+                    PageType.REPORT_LIST_PAGE,
+                    downloads=[_download()],
+                ),
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
+        self.assertEqual(tools.clicks, ["button_9", "button_1"])
+        self.assertEqual(tools.waits, [2.0])
 
     def test_slow_post_login_page_is_reinspected_within_total_wait_limit(self) -> None:
         tools = FakeTools(
@@ -454,7 +524,7 @@ class RetrievalAgentTests(unittest.TestCase):
         self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
         self.assertEqual(tools.downloads, ["link_2"])
 
-    def test_tied_latest_reports_are_not_guessed(self) -> None:
+    def test_all_reports_tied_for_latest_date_are_downloaded(self) -> None:
         tools = FakeTools(
             [
                 _observation(
@@ -469,8 +539,45 @@ class RetrievalAgentTests(unittest.TestCase):
 
         result = self._run(tools)
 
-        self.assertEqual(result.status, RetrievalStatus.AMBIGUOUS)
-        self.assertEqual(tools.downloads, [])
+        self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
+        self.assertEqual(tools.downloads, ["link_1", "link_2"])
+        self.assertEqual(result.downloaded_file.report_count, 2)
+
+    def test_all_latest_dated_report_views_are_opened_and_bundled(self) -> None:
+        latest_buttons = [
+            ButtonObservation(
+                element_id="button_1",
+                text="Report",
+                html_type="button",
+                disabled=False,
+                semantic_action=ButtonSemanticAction.VIEW_REPORT,
+                report_date="2026-08-20",
+            ),
+            ButtonObservation(
+                element_id="button_2",
+                text="Report",
+                html_type="button",
+                disabled=False,
+                semantic_action=ButtonSemanticAction.VIEW_REPORT,
+                report_date="2026-08-20",
+            ),
+        ]
+        tools = FakeTools(
+            [
+                _observation(PageType.REPORT_LIST_PAGE, buttons=latest_buttons),
+                _observation(PageType.REPORT_VIEWER, downloads=[_download()]),
+                _observation(PageType.REPORT_LIST_PAGE, buttons=latest_buttons),
+                _observation(PageType.REPORT_VIEWER, downloads=[_download()]),
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
+        self.assertEqual(tools.clicks, ["button_1", "button_2"])
+        self.assertEqual(tools.downloads, ["link_1", "link_1"])
+        self.assertEqual(tools.backs, 1)
+        self.assertEqual(result.downloaded_file.report_count, 2)
 
     def test_latest_dated_report_view_is_opened_automatically(self) -> None:
         tools = FakeTools(
@@ -507,6 +614,42 @@ class RetrievalAgentTests(unittest.TestCase):
 
         self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
         self.assertEqual(tools.clicks, ["button_2"])
+        self.assertEqual(tools.downloads, ["link_1"])
+
+    def test_latest_dated_view_link_is_opened_instead_of_downloaded_as_index(self) -> None:
+        links = [
+            LinkObservation(
+                element_id="link_1",
+                text="View Report",
+                url="https://reports.example.test/downloadReport/older",
+                domain="example.test",
+                same_domain=True,
+                likely_purpose=LinkPurpose.REPORTS,
+                report_date="2026-08-03",
+                report_label="Older test",
+            ),
+            LinkObservation(
+                element_id="link_2",
+                text="View Report",
+                url="https://reports.example.test/downloadReport/latest",
+                domain="example.test",
+                same_domain=True,
+                likely_purpose=LinkPurpose.REPORTS,
+                report_date="2026-08-18",
+                report_label="Latest test",
+            ),
+        ]
+        tools = FakeTools(
+            [
+                _observation(PageType.REPORT_LIST_PAGE, links=links),
+                _observation(PageType.REPORT_VIEWER, downloads=[_download()]),
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
+        self.assertEqual(tools.clicks, ["link_2"])
         self.assertEqual(tools.downloads, ["link_1"])
 
     def test_printable_html_report_is_saved_without_clicking_print_button(self) -> None:

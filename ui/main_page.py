@@ -70,6 +70,7 @@ DEFAULT_SESSION_VALUES = {
     "processing_status": None,
     "error_state": None,
     "resulting_file_path": None,
+    "resulting_report_count": 0,
     "document_understanding_result": None,
     "workflow_plan": None,
     "browser_action_result": None,
@@ -113,7 +114,22 @@ def _set_state(state: WorkflowState) -> None:
 def _run_file_paths() -> list[Path | None]:
     image_path = st.session_state.temporary_image_path
     result_path = st.session_state.resulting_file_path
-    return [Path(image_path) if image_path else None, Path(result_path) if result_path else None]
+    paths = [
+        Path(image_path) if image_path else None,
+        Path(result_path) if result_path else None,
+    ]
+    result_data = st.session_state.get("retrieval_result")
+    if result_data:
+        try:
+            retrieval = RetrievalResult.model_validate(result_data)
+            if retrieval.downloaded_file:
+                paths.extend(
+                    Path(item.path)
+                    for item in retrieval.downloaded_file.individual_reports
+                )
+        except (TypeError, ValueError):
+            logger.warning("Temporary report paths could not be read during cleanup")
+    return list(dict.fromkeys(paths))
 
 
 def _reset_run(settings: Settings) -> None:
@@ -190,6 +206,7 @@ def _accept_selected_image(selected_file: object, settings: Settings) -> None:
     st.session_state.uploaded_fingerprint = fingerprint
     st.session_state.temporary_image_path = str(stored_path)
     st.session_state.resulting_file_path = None
+    st.session_state.resulting_report_count = 0
     st.session_state.document_understanding_result = None
     st.session_state.workflow_plan = None
     st.session_state.browser_action_result = None
@@ -613,6 +630,7 @@ def _retrieve_report(settings: Settings, area: object) -> None:
         if result.status == RetrievalStatus.DOWNLOADED:
             assert result.downloaded_file is not None
             st.session_state.resulting_file_path = result.downloaded_file.path
+            st.session_state.resulting_report_count = result.downloaded_file.report_count
             st.session_state.processing_status = "Report ready"
             _set_state(WorkflowState.DOWNLOAD_READY)
         elif result.status in {
@@ -811,8 +829,11 @@ def _render_retrieval_input(settings: Settings) -> None:
 
 def _validated_report_payload(
     settings: Settings,
+    path_value: str | None = None,
+    *,
+    file_stem: str = "lab_report",
 ) -> tuple[bytes, str, str] | None:
-    path_value = st.session_state.resulting_file_path
+    path_value = path_value or st.session_state.resulting_file_path
     if not path_value:
         return None
     path = Path(path_value).resolve()
@@ -825,12 +846,39 @@ def _validated_report_payload(
     except OSError:
         return None
     if data.startswith(b"%PDF"):
-        return data, "application/pdf", "lab_report.pdf"
+        return data, "application/pdf", f"{file_stem}.pdf"
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return data, "image/png", "lab_report.png"
+        return data, "image/png", f"{file_stem}.png"
     if data.startswith(b"\xff\xd8\xff"):
-        return data, "image/jpeg", "lab_report.jpg"
+        return data, "image/jpeg", f"{file_stem}.jpg"
+    if data.startswith(b"PK\x03\x04"):
+        return data, "application/zip", f"{file_stem}.zip"
     return None
+
+
+def _render_report_file(
+    report_payload: tuple[bytes, str, str],
+    *,
+    label: str,
+    key: str,
+) -> None:
+    report_data, report_mime, report_name = report_payload
+    with st.expander(f"View {label}", expanded=False):
+        if report_mime == "application/pdf":
+            st.pdf(report_data, height=500, key=f"preview_{key}")
+        else:
+            st.image(report_data, caption=label, width="stretch")
+    st.download_button(
+        f"Download {label}",
+        data=report_data,
+        file_name=report_name,
+        mime=report_mime,
+        type="primary",
+        icon=":material/download:",
+        on_click="ignore",
+        width="stretch",
+        key=f"download_{key}",
+    )
 
 
 def _render_developer_details(settings: Settings) -> None:
@@ -906,22 +954,94 @@ def render_app(settings: Settings) -> None:
                     _reset_run(settings)
     elif state == WorkflowState.DOWNLOAD_READY:
         with main_area.container():
-            report_payload = _validated_report_payload(settings)
+            retrieval = (
+                RetrievalResult.model_validate(st.session_state.retrieval_result)
+                if st.session_state.retrieval_result
+                else None
+            )
+            report_payload = _validated_report_payload(
+                settings,
+                file_stem=(
+                    "latest_lab_reports"
+                    if int(st.session_state.resulting_report_count or 1) > 1
+                    else "lab_report"
+                ),
+            )
             if report_payload is None:
                 render_error("The temporary report file is no longer available.")
             else:
-                report_data, report_mime, report_name = report_payload
-                render_download_ready()
-                st.download_button(
-                    "Download report",
-                    data=report_data,
-                    file_name=report_name,
-                    mime=report_mime,
-                    type="primary",
-                    icon=":material/download:",
-                    on_click="ignore",
-                    width="stretch",
+                insecure_portal_used = bool(
+                    retrieval
+                    and any(
+                        "unencrypted http" in warning.casefold()
+                        for warning in retrieval.warnings
+                    )
                 )
+                report_count = max(
+                    1, int(st.session_state.resulting_report_count or 1)
+                )
+                render_download_ready(
+                    report_count,
+                    insecure_portal_used=insecure_portal_used,
+                )
+                individual_reports = (
+                    retrieval.downloaded_file.individual_reports
+                    if retrieval and retrieval.downloaded_file
+                    else []
+                )
+                if individual_reports:
+                    for index, report in enumerate(individual_reports, 1):
+                        label = report.display_name or f"Latest report {index}"
+                        individual_payload = _validated_report_payload(
+                            settings,
+                            report.path,
+                            file_stem=f"latest_report_{index}",
+                        )
+                        if individual_payload is None:
+                            render_error(f"{label} is no longer available.")
+                            continue
+                        _render_report_file(
+                            individual_payload,
+                            label=label,
+                            key=f"latest_{index}",
+                        )
+                    report_data, report_mime, report_name = report_payload
+                    st.download_button(
+                        "Download all latest reports (ZIP)",
+                        data=report_data,
+                        file_name=report_name,
+                        mime=report_mime,
+                        icon=":material/folder_zip:",
+                        on_click="ignore",
+                        width="stretch",
+                        key="download_all_latest",
+                    )
+                elif report_count > 1:
+                    report_data, report_mime, report_name = report_payload
+                    st.download_button(
+                        "Download all latest reports (ZIP)",
+                        data=report_data,
+                        file_name=report_name,
+                        mime=report_mime,
+                        type="primary",
+                        icon=":material/folder_zip:",
+                        on_click="ignore",
+                        width="stretch",
+                        key="download_all_latest_fallback",
+                    )
+                else:
+                    label = (
+                        retrieval.downloaded_file.display_name
+                        if retrieval
+                        and retrieval.downloaded_file
+                        and retrieval.downloaded_file.display_name
+                        else "report"
+                    )
+                    _render_report_file(
+                        report_payload,
+                        label=label,
+                        key="single_report",
+                    )
             if st.button(
                 "Scan another slip", icon=":material/restart_alt:", width="stretch"
             ):

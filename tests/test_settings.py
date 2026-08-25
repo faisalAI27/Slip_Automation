@@ -33,7 +33,9 @@ class SettingsTests(unittest.TestCase):
             "https://generativelanguage.googleapis.com/v1beta/openai/",
         )
         self.assertEqual(settings.gemini_timeout_seconds, 60)
+        self.assertEqual(settings.gemini_credential_focus_timeout_seconds, 12)
         self.assertEqual(settings.gemini_reasoning_effort, "low")
+        self.assertFalse(settings.allow_insecure_report_portals)
 
 
 if __name__ == "__main__":

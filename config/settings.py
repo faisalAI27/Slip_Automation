@@ -49,6 +49,7 @@ class Settings:
     gemini_api_key: str | None
     gemini_base_url: str
     gemini_timeout_seconds: float
+    gemini_credential_focus_timeout_seconds: float
     gemini_reasoning_effort: str
     ollama_base_url: str
     ollama_timeout_seconds: float
@@ -65,6 +66,7 @@ class Settings:
     interaction_ai_model: str
     portal_url_overrides: dict[str, str]
     portal_https_host_rewrites: dict[str, str]
+    allow_insecure_report_portals: bool
     log_level: str
 
 
@@ -95,6 +97,10 @@ def get_settings() -> Settings:
             "https://generativelanguage.googleapis.com/v1beta/openai/",
         ).strip(),
         gemini_timeout_seconds=float(os.getenv("GEMINI_TIMEOUT_SECONDS", "60")),
+        gemini_credential_focus_timeout_seconds=max(
+            1.0,
+            float(os.getenv("GEMINI_CREDENTIAL_FOCUS_TIMEOUT_SECONDS", "12")),
+        ),
         gemini_reasoning_effort=os.getenv(
             "GEMINI_REASONING_EFFORT", "low"
         ).strip().lower(),
@@ -112,9 +118,9 @@ def get_settings() -> Settings:
         browser_max_search_results=max(
             1, min(10, int(os.getenv("BROWSER_MAX_SEARCH_RESULTS", "8")))
         ),
-        agent_max_steps=max(1, int(os.getenv("AGENT_MAX_STEPS", "12"))),
+        agent_max_steps=max(1, int(os.getenv("AGENT_MAX_STEPS", "40"))),
         agent_max_navigations=max(
-            1, int(os.getenv("AGENT_MAX_NAVIGATIONS", "6"))
+            1, int(os.getenv("AGENT_MAX_NAVIGATIONS", "24"))
         ),
         agent_max_form_submissions=max(
             1, int(os.getenv("AGENT_MAX_FORM_SUBMISSIONS", "2"))
@@ -134,6 +140,9 @@ def get_settings() -> Settings:
         ),
         portal_https_host_rewrites=_as_url_overrides(
             os.getenv("PORTAL_HTTPS_HOST_REWRITES_JSON")
+        ),
+        allow_insecure_report_portals=_as_bool(
+            os.getenv("ALLOW_INSECURE_REPORT_PORTALS"), default=False
         ),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
     )

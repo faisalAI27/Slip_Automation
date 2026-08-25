@@ -62,8 +62,8 @@ REPORT_NOT_FOUND_TERMS = {
 
 @dataclass(frozen=True, slots=True)
 class RetrievalAgentConfig:
-    max_steps: int = 12
-    max_navigations: int = 6
+    max_steps: int = 40
+    max_navigations: int = 24
     max_form_submissions: int = 2
     max_wait_seconds: float = 8.0
 
@@ -106,6 +106,7 @@ class RetrievalAgent:
                 search_provider=DuckDuckGoSearchProvider(
                     max_results=settings.browser_max_search_results
                 ),
+                allow_insecure_http=settings.allow_insecure_report_portals,
             )
 
         return cls(
@@ -136,6 +137,7 @@ class RetrievalAgent:
         authentication_submissions = 0
         post_authentication_wait_seconds = 0.0
         filled_inputs: set[str] = set()
+        pending_report_display_name: str | None = None
         loop_counts: dict[tuple[str, str | None, str | None, str | None], int] = {}
         observation: BrowserObservation | None = None
 
@@ -288,6 +290,35 @@ class RetrievalAgent:
 
                     if observation.authentication_signals.authentication_required:
                         if authentication_submissions >= 1:
+                            if (
+                                post_authentication_wait_seconds
+                                < self._config.max_wait_seconds
+                                and self._config.max_wait_seconds > 0
+                            ):
+                                wait_seconds = min(
+                                    2.0,
+                                    self._config.max_wait_seconds
+                                    - post_authentication_wait_seconds,
+                                )
+                                wait_action = AgentAction(
+                                    type=AgentActionType.WAIT,
+                                    wait_seconds=wait_seconds,
+                                    reason=(
+                                        "Allow asynchronous report results to replace "
+                                        "the submitted login form."
+                                    ),
+                                    confidence=ConfidenceLevel.HIGH,
+                                )
+                                observation = tools.wait(wait_action)
+                                steps += 1
+                                post_authentication_wait_seconds += wait_seconds
+                                self._record(
+                                    history,
+                                    steps,
+                                    wait_action,
+                                    tools.current_domain,
+                                )
+                                continue
                             return self._result(
                                 RetrievalStatus.USER_INPUT_REQUIRED,
                                 observation=observation,
@@ -486,6 +517,69 @@ class RetrievalAgent:
                     download, download_ambiguous = self._download_candidate(
                         observation, selected_choice=selected_choice
                     )
+                    download_batch = self._tied_latest(
+                        observation.download_candidates
+                    )
+                    if download_batch:
+                        downloaded_reports = []
+                        for index, candidate in enumerate(download_batch, 1):
+                            if steps >= self._config.max_steps:
+                                return self._limit_result(
+                                    observation,
+                                    tools,
+                                    steps,
+                                    history,
+                                    mappings,
+                                    "step",
+                                )
+                            action = AgentAction(
+                                type=AgentActionType.DOWNLOAD,
+                                element_id=candidate.element_id,
+                                reason=(
+                                    "Download each report tied for the newest "
+                                    "available date."
+                                ),
+                                confidence=candidate.confidence,
+                            )
+                            if self._looped(loop_counts, action, observation, tools):
+                                return self._loop_result(
+                                    observation, tools, steps, history, mappings
+                                )
+                            downloaded_reports.append(
+                                tools.download(action, observation).model_copy(
+                                    update={
+                                        "display_name": self._report_display_name(
+                                            candidate, index
+                                        )
+                                    }
+                                )
+                            )
+                            steps += 1
+                            self._record(
+                                history, steps, action, tools.current_domain
+                            )
+                        bundled = tools.bundle_downloads(downloaded_reports)
+                        logger.info(
+                            "Retrieval agent completed with %d newest-date reports",
+                            len(downloaded_reports),
+                        )
+                        return RetrievalResult(
+                            status=RetrievalStatus.DOWNLOADED,
+                            downloaded_file=bundled,
+                            final_page_type=observation.page_type,
+                            current_domain=tools.current_domain,
+                            steps_completed=steps,
+                            user_input_requirement=RetrievalUserInputRequirement(
+                                required=False,
+                                reason=None,
+                                requested_information=[],
+                            ),
+                            warnings=tools.warnings,
+                            failure_reason=None,
+                            safe_action_history=history,
+                            field_mappings=mappings,
+                            final_page_diagnostics=self._diagnostics(observation),
+                        )
                     if download_ambiguous:
                         return self._result(
                             RetrievalStatus.AMBIGUOUS,
@@ -511,7 +605,12 @@ class RetrievalAgent:
                             return self._loop_result(
                                 observation, tools, steps, history, mappings
                             )
-                        downloaded = tools.download(action, observation)
+                        downloaded = tools.download(action, observation).model_copy(
+                            update={
+                                "display_name": pending_report_display_name
+                                or self._report_display_name(download, 1)
+                            }
+                        )
                         steps += 1
                         self._record(history, steps, action, tools.current_domain)
                         logger.info("Retrieval agent completed")
@@ -536,6 +635,191 @@ class RetrievalAgent:
                     next_element, ambiguous_navigation = self._navigation_element(
                         observation, selected_choice=selected_choice
                     )
+                    navigation_batch = self._tied_latest(
+                        self._navigation_candidates(observation)
+                    )
+                    if navigation_batch:
+                        downloaded_reports = []
+                        list_observation = observation
+                        for index, candidate in enumerate(navigation_batch):
+                            if (
+                                steps + 2 > self._config.max_steps
+                                or navigations >= self._config.max_navigations
+                            ):
+                                return self._limit_result(
+                                    list_observation,
+                                    tools,
+                                    steps,
+                                    history,
+                                    mappings,
+                                    "step or navigation",
+                                )
+                            click_action = AgentAction(
+                                type=AgentActionType.CLICK,
+                                element_id=candidate.element_id,
+                                reason=(
+                                    "Open each report tied for the newest available "
+                                    "date."
+                                ),
+                                confidence=ConfidenceLevel.HIGH,
+                            )
+                            if self._looped(
+                                loop_counts, click_action, list_observation, tools
+                            ):
+                                return self._loop_result(
+                                    list_observation, tools, steps, history, mappings
+                                )
+                            report_observation = tools.click(
+                                click_action, list_observation
+                            )
+                            steps += 1
+                            navigations += 1
+                            self._record(
+                                history,
+                                steps,
+                                click_action,
+                                tools.current_domain,
+                            )
+                            if report_observation.page_type == PageType.UNKNOWN:
+                                report_wait_seconds = 0.0
+                                while (
+                                    report_observation.page_type == PageType.UNKNOWN
+                                    and report_wait_seconds < self._config.max_wait_seconds
+                                    and steps < self._config.max_steps
+                                ):
+                                    wait_seconds = min(
+                                        2.0,
+                                        self._config.max_wait_seconds
+                                        - report_wait_seconds,
+                                    )
+                                    wait_action = AgentAction(
+                                        type=AgentActionType.WAIT,
+                                        wait_seconds=wait_seconds,
+                                        reason=(
+                                            "Allow the selected report to finish "
+                                            "loading."
+                                        ),
+                                        confidence=ConfidenceLevel.HIGH,
+                                    )
+                                    report_observation = tools.wait(
+                                        wait_action,
+                                        capture_report_navigation=True,
+                                    )
+                                    steps += 1
+                                    report_wait_seconds += wait_seconds
+                                    self._record(
+                                        history,
+                                        steps,
+                                        wait_action,
+                                        tools.current_domain,
+                                    )
+                            report_download, report_ambiguous = self._download_candidate(
+                                report_observation
+                            )
+                            if report_download is None or report_ambiguous:
+                                return self._result(
+                                    RetrievalStatus.AMBIGUOUS,
+                                    observation=report_observation,
+                                    tools=tools,
+                                    steps=steps,
+                                    history=history,
+                                    mappings=mappings,
+                                    reason=(
+                                        "A newest-date report could not be captured "
+                                        "unambiguously."
+                                    ),
+                                )
+                            download_action = AgentAction(
+                                type=AgentActionType.DOWNLOAD,
+                                element_id=report_download.element_id,
+                                reason="Capture the opened newest-date report.",
+                                confidence=report_download.confidence,
+                            )
+                            downloaded_reports.append(
+                                tools.download(
+                                    download_action, report_observation
+                                ).model_copy(
+                                    update={
+                                        "display_name": self._report_display_name(
+                                            candidate, index + 1
+                                        )
+                                    }
+                                )
+                            )
+                            steps += 1
+                            self._record(
+                                history,
+                                steps,
+                                download_action,
+                                tools.current_domain,
+                            )
+                            if index < len(navigation_batch) - 1:
+                                if (
+                                    steps >= self._config.max_steps
+                                    or navigations >= self._config.max_navigations
+                                ):
+                                    return self._limit_result(
+                                        report_observation,
+                                        tools,
+                                        steps,
+                                        history,
+                                        mappings,
+                                        "step or navigation",
+                                    )
+                                back_action = AgentAction(
+                                    type=AgentActionType.GO_BACK,
+                                    reason=(
+                                        "Return to the validated report list for the "
+                                        "next newest-date report."
+                                    ),
+                                    confidence=ConfidenceLevel.HIGH,
+                                )
+                                list_observation = tools.go_back(back_action)
+                                steps += 1
+                                navigations += 1
+                                self._record(
+                                    history,
+                                    steps,
+                                    back_action,
+                                    tools.current_domain,
+                                )
+                                if list_observation.page_type != PageType.REPORT_LIST_PAGE:
+                                    return self._result(
+                                        RetrievalStatus.AMBIGUOUS,
+                                        observation=list_observation,
+                                        tools=tools,
+                                        steps=steps,
+                                        history=history,
+                                        mappings=mappings,
+                                        reason=(
+                                            "The browser could not safely return to "
+                                            "the report list."
+                                        ),
+                                    )
+                        bundled = tools.bundle_downloads(downloaded_reports)
+                        logger.info(
+                            "Retrieval agent completed with %d newest-date reports",
+                            len(downloaded_reports),
+                        )
+                        return RetrievalResult(
+                            status=RetrievalStatus.DOWNLOADED,
+                            downloaded_file=bundled,
+                            final_page_type=report_observation.page_type,
+                            current_domain=tools.current_domain,
+                            steps_completed=steps,
+                            user_input_requirement=RetrievalUserInputRequirement(
+                                required=False,
+                                reason=None,
+                                requested_information=[],
+                            ),
+                            warnings=tools.warnings,
+                            failure_reason=None,
+                            safe_action_history=history,
+                            field_mappings=mappings,
+                            final_page_diagnostics=self._diagnostics(
+                                report_observation
+                            ),
+                        )
                     if ambiguous_navigation:
                         return self._result(
                             RetrievalStatus.AMBIGUOUS,
@@ -557,6 +841,22 @@ class RetrievalAgent:
                                 mappings,
                                 "navigation",
                             )
+                        selected_navigation = next(
+                            (
+                                item
+                                for item in self._navigation_candidates(observation)
+                                if item.element_id == next_element
+                            ),
+                            None,
+                        )
+                        if (
+                            selected_navigation is not None
+                            and getattr(selected_navigation, "report_date", None)
+                            is not None
+                        ):
+                            pending_report_display_name = self._report_display_name(
+                                selected_navigation, 1
+                            )
                         action = AgentAction(
                             type=AgentActionType.CLICK,
                             element_id=next_element,
@@ -571,6 +871,34 @@ class RetrievalAgent:
                         steps += 1
                         navigations += 1
                         self._record(history, steps, action, tools.current_domain)
+                        navigation_wait_seconds = 0.0
+                        while (
+                            observation.page_type == PageType.UNKNOWN
+                            and navigation_wait_seconds < self._config.max_wait_seconds
+                            and steps < self._config.max_steps
+                        ):
+                            wait_seconds = min(
+                                2.0,
+                                self._config.max_wait_seconds
+                                - navigation_wait_seconds,
+                            )
+                            wait_action = AgentAction(
+                                type=AgentActionType.WAIT,
+                                wait_seconds=wait_seconds,
+                                reason=(
+                                    "Allow the selected report page to finish loading."
+                                ),
+                                confidence=ConfidenceLevel.HIGH,
+                            )
+                            observation = tools.wait(wait_action)
+                            steps += 1
+                            navigation_wait_seconds += wait_seconds
+                            self._record(
+                                history,
+                                steps,
+                                wait_action,
+                                tools.current_domain,
+                            )
                         continue
 
                     if observation.page_type in {
@@ -644,7 +972,11 @@ class RetrievalAgent:
                 requested=["Manual confirmation"],
             )
         except BrowserAgentError as exc:
-            logger.warning("Retrieval agent stopped: %s", type(exc).__name__)
+            logger.warning(
+                "Retrieval agent stopped: %s (%s)",
+                type(exc).__name__,
+                str(exc),
+            )
             return self._result(
                 RetrievalStatus.FAILED,
                 observation=observation,
@@ -702,7 +1034,8 @@ class RetrievalAgent:
             ButtonSemanticAction.VIEW_REPORT: 0,
             ButtonSemanticAction.LOGIN: 1,
             ButtonSemanticAction.SUBMIT: 2,
-            ButtonSemanticAction.CONTINUE: 3,
+            ButtonSemanticAction.SEARCH: 3,
+            ButtonSemanticAction.CONTINUE: 4,
         }
         candidates = [
             item
@@ -803,6 +1136,19 @@ class RetrievalAgent:
         *,
         selected_choice: str | None = None,
     ) -> tuple[str | None, bool]:
+        candidates = RetrievalAgent._navigation_candidates(observation)
+        candidate_refs = list(dict.fromkeys(item.element_id for item in candidates))
+        if selected_choice in candidate_refs:
+            return selected_choice, False
+        if len(candidate_refs) == 1:
+            return candidate_refs[0], False
+        latest = RetrievalAgent._unique_latest(candidates)
+        if latest is not None:
+            return latest.element_id, False
+        return None, len(candidate_refs) > 1
+
+    @staticmethod
+    def _navigation_candidates(observation: BrowserObservation) -> list[object]:
         buttons = [
             item
             for item in observation.buttons
@@ -821,30 +1167,59 @@ class RetrievalAgent:
                 LinkPurpose.LOGIN,
             }
         ]
-        candidates = [*buttons, *links]
-        candidate_refs = list(dict.fromkeys(item.element_id for item in candidates))
-        if selected_choice in candidate_refs:
-            return selected_choice, False
-        if len(candidate_refs) == 1:
-            return candidate_refs[0], False
-        latest = RetrievalAgent._unique_latest(candidates)
-        if latest is not None:
-            return latest.element_id, False
-        return None, len(candidate_refs) > 1
+        return [*buttons, *links]
+
+    @staticmethod
+    def _tied_latest(candidates: list[object]) -> list[object]:
+        dated = [
+            item
+            for item in candidates
+            if getattr(item, "report_date", None) is not None
+        ]
+        if len(dated) < 2:
+            return []
+        latest_date = max(getattr(item, "report_date") for item in dated)
+        latest = [
+            item
+            for item in dated
+            if getattr(item, "report_date", None) == latest_date
+        ]
+        return latest if len(latest) > 1 else []
 
     @staticmethod
     def _unique_latest(candidates: list[object]):
-        if len(candidates) < 2 or not all(
-            getattr(item, "report_date", None) is not None for item in candidates
-        ):
-            return None
-        latest_date = max(getattr(item, "report_date") for item in candidates)
-        latest = [
+        dated = [
             item
             for item in candidates
+            if getattr(item, "report_date", None) is not None
+        ]
+        if not dated:
+            return None
+        latest_date = max(getattr(item, "report_date") for item in dated)
+        latest = [
+            item
+            for item in dated
             if getattr(item, "report_date", None) == latest_date
         ]
         return latest[0] if len(latest) == 1 else None
+
+    @staticmethod
+    def _report_display_name(candidate: object, index: int) -> str:
+        label = str(getattr(candidate, "report_label", "") or "").strip()
+        if label:
+            return label[:120]
+        action_label = str(getattr(candidate, "label", "") or "").strip()
+        if action_label and action_label.casefold() not in {
+            "download",
+            "download report",
+            "open",
+            "report",
+            "result",
+            "view",
+            "view report",
+        }:
+            return action_label[:120]
+        return f"Latest report {index}"
 
     @staticmethod
     def _navigation_choices(

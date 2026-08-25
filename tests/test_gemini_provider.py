@@ -221,6 +221,7 @@ class GeminiProviderTests(unittest.TestCase):
         focused_request = client.beta.chat.completions.parse.call_args_list[1].kwargs
         self.assertIs(focused_request["response_format"], CredentialFocusResult)
         self.assertEqual(focused_request["reasoning_effort"], "low")
+        self.assertEqual(focused_request["timeout"], 12.0)
 
     def test_focused_credential_failure_keeps_valid_general_result(self) -> None:
         provider, client = self._provider_with_client()

@@ -78,8 +78,13 @@ class BrowserSession:
         self._warnings: list[str] = []
         self._last_navigation: NavigationOutcome | None = None
         self._expected_download = False
+        self._expected_report_navigation = False
         self._expected_popup = False
         self._pending_popup: Page | None = None
+        self._pending_report_document_url: str | None = None
+        self._legacy_report_click_dispatch = False
+        self._current_page_from_report_action = False
+        self._parent_pages: list[Page] = []
         self._last_document_response: Response | None = None
         self._pending_download: Download | None = None
         self._navigation_url_rewrites = {
@@ -93,6 +98,10 @@ class BrowserSession:
         if self._page is None:
             raise BrowserLaunchError("The browser page is not available.")
         return self._page
+
+    @property
+    def current_page_from_report_action(self) -> bool:
+        return self._current_page_from_report_action
 
     @property
     def warnings(self) -> list[str]:
@@ -189,6 +198,20 @@ class BrowserSession:
         parsed = urlsplit(request.url)
         scheme = parsed.scheme.casefold()
         if scheme not in {"http", "https"}:
+            # Legacy report portals commonly create an empty named popup first,
+            # then render a same-domain report into that window or one of its
+            # frames.  `about:blank` performs no network navigation and inherits
+            # the opener's origin.  Permit only this exact, short-lived bootstrap
+            # while handling an already validated report action; every report
+            # resource loaded from it is still independently URL/DNS validated.
+            if (
+                request.is_navigation_request()
+                and request.url == "about:blank"
+                and self._expected_popup
+                and self._expected_report_navigation
+            ):
+                route.continue_()
+                return
             if not request.is_navigation_request() and scheme in {
                 "about",
                 "blob",
@@ -307,12 +330,42 @@ class BrowserSession:
 
     def _handle_response(self, page: Page, response: Response) -> None:
         try:
-            if (
-                response.request.resource_type == "document"
-                and response.frame == page.main_frame
-            ):
+            if response.request.resource_type != "document":
+                return
+            if response.frame == page.main_frame:
                 self._last_document_response = response
-        except PlaywrightError:
+                return
+            if (
+                self._expected_report_navigation
+                and response.request.method.casefold() == "get"
+                and 200 <= response.status < 400
+            ):
+                source_url = page.url
+                # A report may be loaded into a frame inside an inherited
+                # `about:blank` popup.  In that narrow case the popup itself has
+                # no hostname, so bind the frame to the already validated opener
+                # instead of treating the transitional URL as a destination.
+                if (
+                    page == self._pending_popup
+                    and urlsplit(source_url).scheme.casefold()
+                    not in {"http", "https"}
+                    and self._page is not None
+                ):
+                    source_url = self._page.url
+                source = self._validate(source_url, resolve_dns=False)
+                target = self._validate(response.url, resolve_dns=False)
+                media_type = response.headers.get("content-type", "").split(";", 1)[
+                    0
+                ].strip().casefold()
+                if source.domain == target.domain and media_type in {
+                    "text/html",
+                    "application/xhtml+xml",
+                    "application/pdf",
+                    "image/png",
+                    "image/jpeg",
+                }:
+                    self._pending_report_document_url = target.url
+        except (PlaywrightError, UnsafeNavigationError):
             return
 
     def _referenced_locator(self, element_id: str) -> object:
@@ -350,14 +403,50 @@ class BrowserSession:
             ) from exc
         logger.info("Controlled field fill completed")
 
-    def click(self, element_id: str) -> None:
+    def click(
+        self,
+        element_id: str,
+        *,
+        capture_report_navigation: bool = False,
+    ) -> None:
         locator = self._referenced_locator(element_id)
         self._expected_popup = True
         self._expected_download = True
+        self._expected_report_navigation = capture_report_navigation
         self._pending_popup = None
         self._pending_download = None
+        self._pending_report_document_url = None
+        inline_click_handler = locator.get_attribute("onclick") is not None  # type: ignore[attr-defined]
         try:
-            locator.click()  # type: ignore[attr-defined]
+            try:
+                if (
+                    capture_report_navigation
+                    and inline_click_handler
+                    and self._legacy_report_click_dispatch
+                ):
+                    locator.evaluate("(element) => element.click()")  # type: ignore[attr-defined]
+                else:
+                    locator.click()  # type: ignore[attr-defined]
+            except PlaywrightTimeoutError:
+                # Some older report portals leave a transparent loading layer in
+                # the DOM after showing the first report. Playwright's normal
+                # actionability click then waits even though the validated legacy
+                # control remains visible. Only fall back for an explicit inline
+                # click handler on the same already-referenced element.
+                if not inline_click_handler:
+                    raise
+                if not locator.is_visible() or not locator.is_enabled():  # type: ignore[attr-defined]
+                    raise
+                locator.evaluate("(element) => element.click()")  # type: ignore[attr-defined]
+                self._warnings.append(
+                    "A validated legacy report control required a direct click event."
+                )
+            if capture_report_navigation and inline_click_handler:
+                # Once one inline report action has been validated and used, later
+                # actions on the same legacy results page may be obstructed by the
+                # site's discarded iframe overlay. Directly dispatch only those
+                # subsequent validated report controls.
+                self._legacy_report_click_dispatch = True
             self.page.wait_for_timeout(500)
         except PlaywrightTimeoutError as exc:
             raise BrowserTimeoutError("The webpage action took too long.") from exc
@@ -368,28 +457,112 @@ class BrowserSession:
         finally:
             self._expected_popup = False
             self._expected_download = False
+            self._expected_report_navigation = False
 
-        if not self._adopt_pending_popup():
+        adopted = self._adopt_pending_popup()
+        if (
+            not adopted
+            and capture_report_navigation
+            and self._pending_report_document_url is not None
+        ):
+            adopted = self._adopt_pending_report_document()
+        if capture_report_navigation:
+            self._current_page_from_report_action = True
+        if not adopted:
             parsed = urlsplit(self.page.url)
             if parsed.scheme.casefold() in {"http", "https"}:
                 self._validate(self.page.url)
         logger.info("Controlled webpage click completed")
 
+    def _adopt_pending_report_document(self) -> bool:
+        target_url = self._pending_report_document_url
+        self._pending_report_document_url = None
+        if target_url is None or self._context is None:
+            return False
+        validated = self._validate(target_url)
+        parent = self.page
+        report_page: Page | None = None
+        self._expected_popup = True
+        try:
+            report_page = self._context.new_page()
+        except PlaywrightError as exc:
+            raise NavigationError(
+                "The observed report document could not be opened safely."
+            ) from exc
+        finally:
+            self._expected_popup = False
+            self._pending_popup = None
+        try:
+            report_page.goto(
+                validated.url,
+                wait_until="commit",
+                timeout=self._config.navigation_timeout_seconds * 1_000,
+            )
+            final = self._validate(report_page.url)
+            try:
+                report_page.wait_for_load_state(
+                    "domcontentloaded",
+                    timeout=min(
+                        self._config.navigation_timeout_seconds,
+                        5.0,
+                    )
+                    * 1_000,
+                )
+            except PlaywrightTimeoutError:
+                self._warnings.append(
+                    "The observed report document continued loading during capture."
+                )
+        except PlaywrightTimeoutError as exc:
+            report_page.close()
+            raise BrowserTimeoutError(
+                "The observed report document took too long to open."
+            ) from exc
+        except PlaywrightError as exc:
+            report_page.close()
+            raise NavigationError(
+                "The observed report document could not be opened safely."
+            ) from exc
+        self._parent_pages.append(parent)
+        self._page = report_page
+        self._verified_hosts.add((final.hostname, final.port))
+        self._warnings.append(
+            "A same-domain report frame was reopened in the private browser for capture."
+        )
+        return True
+
     def _adopt_pending_popup(self) -> bool:
         if self._pending_popup is None:
             return False
         popup = self._pending_popup
-        self._pending_popup = None
         try:
             popup.wait_for_load_state(
                 "domcontentloaded",
-                timeout=self._config.navigation_timeout_seconds * 1_000,
+                # Do not spend the full navigation timeout on a temporary blank
+                # popup. Delayed report events receive another bounded capture
+                # window in ControlledBrowserTools.click().
+                timeout=min(self._config.navigation_timeout_seconds, 2.0) * 1_000,
             )
         except PlaywrightTimeoutError:
             self._warnings.append(
                 "The expected report popup did not finish loading before inspection."
             )
-        validated = self._validate(popup.url)
+        popup_url = popup.url
+        if urlsplit(popup_url).scheme.casefold() not in {"http", "https"}:
+            # Keep a harmless transient popup available for the subsequent
+            # bounded report-event wait. If its same-domain frame was already
+            # observed, discard the shell so that the validated frame document
+            # can be reopened and captured directly.
+            if self._pending_report_document_url is not None:
+                self._pending_popup = None
+                try:
+                    popup.close()
+                except PlaywrightError:
+                    pass
+            return False
+        self._pending_popup = None
+        validated = self._validate(popup_url)
+        if self._page is not None and self._page != popup:
+            self._parent_pages.append(self._page)
         self._page = popup
         self._verified_hosts.add((validated.hostname, validated.port))
         return True
@@ -423,13 +596,17 @@ class BrowserSession:
         *,
         allowed_domains: set[str],
         max_bytes: int,
+        allow_insecure_http: bool = False,
     ) -> None:
         """Capture a normal download or fetch an observed embedded report resource."""
         if element_id == "printable_page_1":
             current = self._validate(self.page.url)
-            if not current.uses_https or current.domain not in allowed_domains:
+            if (
+                (not current.uses_https and not allow_insecure_http)
+                or current.domain not in allowed_domains
+            ):
                 raise InteractionSafetyError(
-                    "The printable report page is outside the trusted HTTPS workflow."
+                    "The printable report page is outside the trusted workflow."
                 )
             try:
                 self.page.emulate_media(media="print")
@@ -470,9 +647,12 @@ class BrowserSession:
                 )
             try:
                 validated = self._validate(response.url)
-                if not validated.uses_https or validated.domain not in allowed_domains:
+                if (
+                    (not validated.uses_https and not allow_insecure_http)
+                    or validated.domain not in allowed_domains
+                ):
                     raise InteractionSafetyError(
-                        "The final report response is outside the trusted HTTPS workflow."
+                        "The final report response is outside the trusted workflow."
                     )
                 body = response.body()
                 if not body or len(body) > max_bytes:
@@ -533,9 +713,12 @@ class BrowserSession:
                 "HTTPS origin."
             )
         validated = self._validate(resource_url)
-        if not validated.uses_https or validated.domain not in allowed_domains:
+        if (
+            (not validated.uses_https and not allow_insecure_http)
+            or validated.domain not in allowed_domains
+        ):
             raise InteractionSafetyError(
-                "The embedded report resource is outside the trusted HTTPS workflow."
+                "The embedded report resource is outside the trusted workflow."
             )
         if self._context is None:
             raise DownloadCaptureError("The private browser context is unavailable.")
@@ -568,9 +751,12 @@ class BrowserSession:
                         "configured HTTPS origin."
                     )
                 current = self._validate(next_url)
-                if not current.uses_https or current.domain not in allowed_domains:
+                if (
+                    (not current.uses_https and not allow_insecure_http)
+                    or current.domain not in allowed_domains
+                ):
                     raise InteractionSafetyError(
-                        "The report resource redirected outside the trusted HTTPS "
+                        "The report resource redirected outside the trusted "
                         "workflow."
                     )
             if response is None:
@@ -578,9 +764,11 @@ class BrowserSession:
                     "The observed report resource could not be downloaded."
                 )
             final = self._validate(response.url)
-            if final.domain not in allowed_domains or not final.uses_https:
+            if final.domain not in allowed_domains or (
+                not final.uses_https and not allow_insecure_http
+            ):
                 raise InteractionSafetyError(
-                    "The report resource redirected outside the trusted HTTPS workflow."
+                    "The report resource redirected outside the trusted workflow."
                 )
             if not response.ok:
                 raise DownloadCaptureError(
@@ -608,11 +796,13 @@ class BrowserSession:
         timeout_seconds: float,
         *,
         capture_report_events: bool = False,
+        capture_report_navigation: bool = False,
     ) -> None:
         bounded = max(0.0, min(timeout_seconds, 30.0))
         if capture_report_events:
             self._expected_popup = True
             self._expected_download = True
+            self._expected_report_navigation = capture_report_navigation
         try:
             self.page.wait_for_timeout(bounded * 1_000)
         except PlaywrightError as exc:
@@ -621,10 +811,43 @@ class BrowserSession:
             if capture_report_events:
                 self._expected_popup = False
                 self._expected_download = False
+                self._expected_report_navigation = False
         if capture_report_events:
-            self._adopt_pending_popup()
+            adopted = self._adopt_pending_popup()
+            if (
+                not adopted
+                and capture_report_navigation
+                and self._pending_report_document_url is not None
+            ):
+                adopted = self._adopt_pending_report_document()
+            if adopted and capture_report_navigation:
+                self._current_page_from_report_action = True
 
     def go_back(self) -> None:
+        if self._parent_pages:
+            current = self.page
+            parent = self._parent_pages.pop()
+            try:
+                current.close()
+            except PlaywrightError:
+                pass
+            self._page = parent
+            self._current_page_from_report_action = False
+            self._last_document_response = None
+            self._pending_download = None
+            try:
+                parent.wait_for_load_state(
+                    "domcontentloaded",
+                    timeout=self._config.navigation_timeout_seconds * 1_000,
+                )
+                self._validate(parent.url)
+            except PlaywrightTimeoutError as exc:
+                raise BrowserTimeoutError(
+                    "The browser could not return safely."
+                ) from exc
+            except PlaywrightError as exc:
+                raise NavigationError("The browser could not return safely.") from exc
+            return
         try:
             self.page.go_back(
                 wait_until="domcontentloaded",
@@ -744,8 +967,13 @@ class BrowserSession:
         self._verified_hosts.clear()
         self._last_navigation = None
         self._expected_download = False
+        self._expected_report_navigation = False
         self._expected_popup = False
         self._pending_popup = None
+        self._pending_report_document_url = None
+        self._legacy_report_click_dispatch = False
+        self._current_page_from_report_action = False
+        self._parent_pages.clear()
         self._last_document_response = None
         self._pending_download = None
         logger.info("Browser session closed")
