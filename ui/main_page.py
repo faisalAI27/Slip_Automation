@@ -269,6 +269,12 @@ def _process_document(settings: Settings, area: object) -> None:
     st.session_state.document_processing_stage = "document_analysis:running"
     st.session_state.document_analysis_duration_seconds = None
     analysis_started_at = perf_counter()
+    provider_name = settings.document_ai_provider.strip().lower()
+    logger.info(
+        "Document analysis started: provider=%s model=%s",
+        provider_name,
+        settings.document_ai_model,
+    )
 
     try:
         provider = create_document_provider(settings)
@@ -289,11 +295,6 @@ def _process_document(settings: Settings, area: object) -> None:
                 )
         st.session_state.document_understanding_result = result.model_dump(mode="json")
         st.session_state.document_processing_stage = "document_analysis:complete"
-        st.session_state.document_analysis_duration_seconds = round(
-            perf_counter() - analysis_started_at,
-            3,
-        )
-
         if result.analysis_status == AnalysisStatus.UNCLEAR:
             st.session_state.error_state = (
                 "We couldn't clearly read this slip. Please take a clearer photo and try again."
@@ -356,6 +357,15 @@ def _process_document(settings: Settings, area: object) -> None:
         st.session_state.document_processing_stage = "document_analysis:unexpected_error"
         _set_state(WorkflowState.FAILED)
         st.rerun()
+    finally:
+        duration_seconds = round(perf_counter() - analysis_started_at, 3)
+        st.session_state.document_analysis_duration_seconds = duration_seconds
+        logger.info(
+            "Document analysis finished: provider=%s duration_seconds=%.3f stage=%s",
+            provider_name,
+            duration_seconds,
+            st.session_state.document_processing_stage,
+        )
 
 
 def _plan_workflow(area: object) -> None:

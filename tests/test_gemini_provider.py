@@ -73,6 +73,7 @@ class GeminiProviderTests(unittest.TestCase):
                 base_url=GEMINI_BASE_URL,
                 model="gemini-3.7-flash",
                 timeout_seconds=90,
+                reasoning_effort="low",
             )
         return provider, client
 
@@ -88,6 +89,7 @@ class GeminiProviderTests(unittest.TestCase):
                 base_url=GEMINI_BASE_URL,
                 model="gemini-3.7-flash",
                 timeout_seconds=37,
+                reasoning_effort="low",
             )
 
         client_class.assert_called_once_with(
@@ -96,6 +98,19 @@ class GeminiProviderTests(unittest.TestCase):
             timeout=37,
             max_retries=0,
         )
+
+    def test_invalid_reasoning_effort_is_rejected_safely(self) -> None:
+        with self.assertRaisesRegex(
+            ProviderConfigurationError,
+            "GEMINI_REASONING_EFFORT",
+        ):
+            GeminiDocumentVisionProvider(
+                api_key="test-key",
+                base_url=GEMINI_BASE_URL,
+                model="gemini-3.7-flash",
+                timeout_seconds=60,
+                reasoning_effort="unbounded",
+            )
 
     def test_configured_model_and_structured_schema_are_used(self) -> None:
         provider, client = self._provider_with_client()
@@ -109,6 +124,7 @@ class GeminiProviderTests(unittest.TestCase):
         request = client.beta.chat.completions.parse.call_args.kwargs
         self.assertEqual(request["model"], "gemini-3.7-flash")
         self.assertIs(request["response_format"], DocumentUnderstandingResult)
+        self.assertEqual(request["reasoning_effort"], "low")
 
     def test_jpg_jpeg_and_png_use_correct_base64_data_urls(self) -> None:
         expected_mime = {
@@ -159,6 +175,7 @@ class GeminiProviderTests(unittest.TestCase):
         request = client.chat.completions.create.call_args.kwargs
         self.assertEqual(request["response_format"]["type"], "json_schema")
         self.assertEqual(request["model"], "gemini-3.7-flash")
+        self.assertEqual(request["reasoning_effort"], "low")
 
     def test_rejected_parse_uses_validated_json_schema_fallback(self) -> None:
         provider, client = self._provider_with_client()
@@ -251,6 +268,8 @@ class GeminiProviderTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             with self.assertRaises(ProviderTimeoutError):
                 provider.analyze_document(self._image(directory))
+
+        self.assertEqual(client.beta.chat.completions.parse.call_count, 1)
 
     def test_rate_limit_is_temporarily_unavailable(self) -> None:
         provider, client = self._provider_with_client()

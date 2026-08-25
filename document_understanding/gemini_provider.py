@@ -35,6 +35,7 @@ logger = get_logger(__name__)
 MIME_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 PARSE_FALLBACK_STATUS_CODES = {400, 404, 405, 415, 422, 501}
 TRANSIENT_RETRY_SECONDS = 1.0
+ALLOWED_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high"}
 ResultT = TypeVar("ResultT")
 
 
@@ -47,8 +48,14 @@ class GeminiDocumentVisionProvider:
         base_url: str,
         model: str,
         timeout_seconds: float,
+        reasoning_effort: str,
     ) -> None:
         self._model = model
+        self._reasoning_effort = reasoning_effort.strip().lower()
+        if self._reasoning_effort not in ALLOWED_REASONING_EFFORTS:
+            raise ProviderConfigurationError(
+                "GEMINI_REASONING_EFFORT must be none, minimal, low, medium, or high."
+            )
         self._client = OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -120,6 +127,7 @@ class GeminiDocumentVisionProvider:
                 model=self._model,
                 messages=messages,
                 response_format=DocumentUnderstandingResult,
+                reasoning_effort=self._reasoning_effort,
             )
         )
         if not completion.choices:
@@ -134,6 +142,7 @@ class GeminiDocumentVisionProvider:
                 lambda: self._client.chat.completions.create(
                     model=self._model,
                     messages=messages,
+                    reasoning_effort=self._reasoning_effort,
                     response_format={
                         "type": "json_schema",
                         "json_schema": {
@@ -168,6 +177,11 @@ class GeminiDocumentVisionProvider:
         for attempt in range(2):
             try:
                 return operation()
+            except APITimeoutError:
+                # A full request timeout has already consumed the latency budget.
+                # Retrying it would double the user's wait without a quick signal
+                # that the service has recovered.
+                raise
             except (APIConnectionError, APIStatusError, RateLimitError) as exc:
                 transient = (
                     isinstance(exc, (APIConnectionError, RateLimitError))

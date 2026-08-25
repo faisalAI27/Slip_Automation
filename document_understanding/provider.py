@@ -75,6 +75,7 @@ def create_document_provider(settings: Settings) -> DocumentVisionProvider:
             base_url=settings.gemini_base_url,
             model=model_name,
             timeout_seconds=settings.gemini_timeout_seconds,
+            reasoning_effort=settings.gemini_reasoning_effort,
         )
 
     raise ProviderConfigurationError(

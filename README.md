@@ -70,7 +70,8 @@ Environment access is centralized in `config/settings.py`.
 | `DOCUMENT_AI_TIMEOUT_SECONDS` | `90` | Optional paid-provider request timeout |
 | `GEMINI_API_KEY` | empty | Gemini API credential; set only in the ignored local `.env` |
 | `GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/openai/` | Gemini OpenAI-compatible endpoint |
-| `GEMINI_TIMEOUT_SECONDS` | `90` | Gemini document-analysis request timeout |
+| `GEMINI_TIMEOUT_SECONDS` | `60` | Maximum time for one Gemini document-analysis request |
+| `GEMINI_REASONING_EFFORT` | `low` | Low-latency reasoning level for document extraction |
 | `BROWSER_HEADLESS` | `true` | Runs isolated Chromium without displaying a browser window |
 | `BROWSER_TIMEOUT_SECONDS` | `30` | General browser/inspection timeout |
 | `BROWSER_NAVIGATION_TIMEOUT_SECONDS` | `45` | Maximum initial navigation wait |
@@ -99,12 +100,15 @@ DOCUMENT_AI_MODEL=gemini-3.7-flash
 
 GEMINI_API_KEY=your_key_here
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
-GEMINI_TIMEOUT_SECONDS=90
+GEMINI_TIMEOUT_SECONDS=60
+GEMINI_REASONING_EFFORT=low
 ```
 
 Gemini provides faster cloud inference and requires internet access and API credentials. When Gemini is selected, the uploaded slip image is sent to the configured Gemini API for document understanding. The independent QR decoder still runs locally.
 
-Gemini uses the OpenAI-compatible structured Chat Completions interface. If its preferred parsed-output helper is unavailable, the provider makes a controlled JSON-schema request and still validates the response locally. Transient connection, rate-limit, or server-capacity failures receive at most one application-level retry.
+Gemini uses the OpenAI-compatible structured Chat Completions interface. If its preferred parsed-output helper is unavailable, the provider makes a controlled JSON-schema request and still validates the response locally. Low reasoning effort keeps routine document extraction responsive. Transient connection, rate-limit, or server-capacity failures receive at most one application-level retry; a full timeout is never retried.
+
+For latency-sensitive document parsing, set `DOCUMENT_AI_MODEL=gemini-3.5-flash-lite`. For more difficult documents where maximum extraction quality matters more than speed, use `DOCUMENT_AI_MODEL=gemini-3.7-flash`. The provider and validation pipeline are unchanged when switching models.
 
 ### Ollama — local fallback
 

@@ -32,7 +32,8 @@ class SettingsTests(unittest.TestCase):
             settings.gemini_base_url,
             "https://generativelanguage.googleapis.com/v1beta/openai/",
         )
-        self.assertEqual(settings.gemini_timeout_seconds, 90)
+        self.assertEqual(settings.gemini_timeout_seconds, 60)
+        self.assertEqual(settings.gemini_reasoning_effort, "low")
 
 
 if __name__ == "__main__":

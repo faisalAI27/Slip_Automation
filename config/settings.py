@@ -49,6 +49,7 @@ class Settings:
     gemini_api_key: str | None
     gemini_base_url: str
     gemini_timeout_seconds: float
+    gemini_reasoning_effort: str
     ollama_base_url: str
     ollama_timeout_seconds: float
     browser_headless: bool
@@ -93,7 +94,10 @@ def get_settings() -> Settings:
             "GEMINI_BASE_URL",
             "https://generativelanguage.googleapis.com/v1beta/openai/",
         ).strip(),
-        gemini_timeout_seconds=float(os.getenv("GEMINI_TIMEOUT_SECONDS", "90")),
+        gemini_timeout_seconds=float(os.getenv("GEMINI_TIMEOUT_SECONDS", "60")),
+        gemini_reasoning_effort=os.getenv(
+            "GEMINI_REASONING_EFFORT", "low"
+        ).strip().lower(),
         ollama_base_url=os.getenv(
             "OLLAMA_BASE_URL", "http://127.0.0.1:11434"
         ).strip(),
