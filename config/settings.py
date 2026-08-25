@@ -35,6 +35,18 @@ def _as_url_overrides(value: str | None) -> dict[str, str]:
     }
 
 
+def _as_origins(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    return tuple(
+        dict.fromkeys(
+            origin.strip().rstrip("/")
+            for origin in value.split(",")
+            if origin.strip() and origin.strip() != "*"
+        )
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     app_env: str
@@ -67,6 +79,9 @@ class Settings:
     portal_url_overrides: dict[str, str]
     portal_https_host_rewrites: dict[str, str]
     allow_insecure_report_portals: bool
+    backend_max_concurrent_jobs: int
+    job_ttl_minutes: int
+    api_allowed_origins: tuple[str, ...]
     log_level: str
 
 
@@ -144,5 +159,10 @@ def get_settings() -> Settings:
         allow_insecure_report_portals=_as_bool(
             os.getenv("ALLOW_INSECURE_REPORT_PORTALS"), default=False
         ),
+        backend_max_concurrent_jobs=max(
+            1, int(os.getenv("BACKEND_MAX_CONCURRENT_JOBS", "1"))
+        ),
+        job_ttl_minutes=max(1, int(os.getenv("JOB_TTL_MINUTES", "30"))),
+        api_allowed_origins=_as_origins(os.getenv("API_ALLOWED_ORIGINS")),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
     )

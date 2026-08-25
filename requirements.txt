@@ -1,4 +1,4 @@
-streamlit[pdf]>=1.52,<2
+streamlit[pdf]>=1.62,<2
 python-dotenv>=1.0,<2
 Pillow>=10.0,<13
 ollama>=0.6,<1
@@ -6,3 +6,7 @@ openai>=2.0,<3
 pydantic>=2.10,<3
 zxing-cpp>=2.3,<3
 playwright>=1.55,<2
+fastapi>=0.141,<1
+uvicorn>=0.52,<1
+python-multipart>=0.0.32,<1
+httpx>=0.28,<1

@@ -7,7 +7,6 @@ import uuid
 
 import streamlit as st
 
-from browser_agent.agent import RetrievalAgent
 from browser_agent.executor import BrowserExecutor
 from browser_agent.models import (
     AgentActionType,
@@ -22,9 +21,9 @@ from document_understanding.provider import (
     ProviderResponseError,
     ProviderTimeoutError,
     ProviderUnavailableError,
-    create_document_provider,
 )
-from document_understanding.service import DocumentUnderstandingService
+from services.files import validate_report_path
+from services.report_retrieval import ReportRetrievalService
 from ui.components import (
     render_browser_outcome,
     render_download_ready,
@@ -55,7 +54,6 @@ from utils.file_utils import (
 )
 from utils.logger import get_logger
 from workflow.models import ActionType, PlanningStatus, WorkflowPlan
-from workflow.planner import WorkflowPlanner
 from workflow.state import WorkflowState
 from workflow.validation import PlanningValidationError
 
@@ -294,7 +292,7 @@ def _process_document(settings: Settings, area: object) -> None:
     )
 
     try:
-        provider = create_document_provider(settings)
+        service = ReportRetrievalService.from_settings(settings)
         analysis_message = (
             "Reading your slip locally..."
             if settings.document_ai_provider.strip().lower() == "ollama"
@@ -307,7 +305,7 @@ def _process_document(settings: Settings, area: object) -> None:
                 show_time=True,
                 width="stretch",
             ):
-                result = DocumentUnderstandingService(provider).analyze(
+                result = service.analyze_document(
                     Path(st.session_state.temporary_image_path)
                 )
         st.session_state.document_understanding_result = result.model_dump(mode="json")
@@ -385,7 +383,7 @@ def _process_document(settings: Settings, area: object) -> None:
         )
 
 
-def _plan_workflow(area: object) -> None:
+def _plan_workflow(settings: Settings, area: object) -> None:
     area.empty()
     progress_area = st.empty()
     _set_state(WorkflowState.DISCOVERING_PORTAL)
@@ -403,7 +401,9 @@ def _plan_workflow(area: object) -> None:
                 show_time=True,
                 width="stretch",
             ):
-                plan = WorkflowPlanner().plan(result)
+                plan = ReportRetrievalService.from_settings(settings).plan_workflow(
+                    result
+                )
 
         st.session_state.workflow_plan = plan.model_dump(mode="json")
         st.session_state.planning_stage = "workflow_planning:complete"
@@ -469,12 +469,14 @@ def _suggested_portal_url() -> str:
     return action.target or "" if action.type == ActionType.OPEN_URL else ""
 
 
-def _use_manual_portal_url(value: str) -> None:
+def _use_manual_portal_url(settings: Settings, value: str) -> None:
     try:
         result = DocumentUnderstandingResult.model_validate(
             st.session_state.document_understanding_result
         )
-        plan = WorkflowPlanner().plan_user_provided_url(result, value)
+        plan = ReportRetrievalService.from_settings(
+            settings
+        ).plan_user_provided_url(result, value)
     except (PlanningValidationError, ValueError, TypeError):
         st.session_state.portal_recovery_error = (
             "Enter a complete public website, for example https://hospital.example."
@@ -494,7 +496,7 @@ def _use_manual_portal_url(value: str) -> None:
     st.rerun()
 
 
-def _render_portal_recovery() -> None:
+def _render_portal_recovery(settings: Settings) -> None:
     browser_data = st.session_state.browser_action_result
     if not browser_data:
         return
@@ -525,7 +527,7 @@ def _render_portal_recovery() -> None:
                 width="stretch",
             )
         if submitted:
-            _use_manual_portal_url(portal_url)
+            _use_manual_portal_url(settings, portal_url)
         if st.session_state.portal_recovery_error:
             render_error(st.session_state.portal_recovery_error)
 
@@ -615,7 +617,9 @@ def _retrieve_report(settings: Settings, area: object) -> None:
                 show_time=True,
                 width="stretch",
             ):
-                result = RetrievalAgent.from_settings(settings).run(
+                result = ReportRetrievalService.from_settings(
+                    settings
+                ).retrieve_prepared(
                     document,
                     plan,
                     user_fields=user_fields,
@@ -836,24 +840,22 @@ def _validated_report_payload(
     path_value = path_value or st.session_state.resulting_file_path
     if not path_value:
         return None
-    path = Path(path_value).resolve()
+    validated = validate_report_path(
+        Path(path_value),
+        allowed_directory=settings.temp_dir,
+        max_download_mb=settings.max_report_download_mb,
+    )
+    if validated is None:
+        return None
     try:
-        if path.parent != settings.temp_dir.resolve() or not path.is_file():
-            return None
-        if path.stat().st_size > settings.max_report_download_mb * 1024 * 1024:
-            return None
-        data = path.read_bytes()
+        data = validated.path.read_bytes()
     except OSError:
         return None
-    if data.startswith(b"%PDF"):
-        return data, "application/pdf", f"{file_stem}.pdf"
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return data, "image/png", f"{file_stem}.png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return data, "image/jpeg", f"{file_stem}.jpg"
-    if data.startswith(b"PK\x03\x04"):
-        return data, "application/zip", f"{file_stem}.zip"
-    return None
+    return (
+        data,
+        validated.content_type,
+        f"{file_stem}{validated.extension}",
+    )
 
 
 def _render_report_file(
@@ -937,7 +939,7 @@ def render_app(settings: Settings) -> None:
             st.session_state.auto_retrieve_requested = True
             _process_document(settings, main_area)
     elif state == WorkflowState.DOCUMENT_UNDERSTOOD:
-        _plan_workflow(main_area)
+        _plan_workflow(settings, main_area)
     elif state == WorkflowState.PLAN_READY:
         _execute_browser(settings, main_area)
     elif state == WorkflowState.BROWSER_OBSERVATION_READY:
@@ -1105,7 +1107,7 @@ def render_app(settings: Settings) -> None:
                     st.session_state.workflow_plan,
                     st.session_state.browser_action_result,
                 )
-            _render_portal_recovery()
+            _render_portal_recovery(settings)
             st.write("")
             if st.button(
                 "Scan another slip", icon=":material/restart_alt:", width="stretch"

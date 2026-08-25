@@ -1,10 +1,44 @@
-# Get My Lab Report — Phase 5
+# Get My Lab Report — Phase 5 + reusable API
 
 This Streamlit app accepts a hospital or laboratory slip image, turns it into a validated semantic representation, builds a deterministic retrieval plan, and uses one bounded private browser session to retrieve a validated PDF or image report when the portal supports safe automation. Document understanding can use Gemini for faster cloud inference, Ollama for local inference, or the existing OpenAI provider. Browser interaction remains deterministic.
 
 > **Current status:** Phases 1–4 upload, understand, plan, and observe. Phase 5 continues from `BROWSER_OBSERVATION_READY`, semantically maps document fields to observed website fields, performs at most one authentication submission, and captures only validated PDF or image reports. A single newest-date report is prepared on its own; when several reports share the newest date, each is retained separately and an optional ZIP is also prepared. CAPTCHA, OTP, undated ambiguous choices, missing fields, unsafe domains, and unsupported portal designs cause a controlled stop.
 
 This application is intended only for retrieving reports that the user or patient is authorized to access. It does not bypass portal authorization or verification controls.
+
+## Run the FastAPI backend
+
+The API calls the same UI-independent application service used by Streamlit; it does
+not move or duplicate the document, planning, browser, or download engines. The first
+backend uses a thread-safe in-memory job store and a bounded local thread pool. It is a
+development/prototype adapter: jobs do not survive a process restart and should be
+replaced with durable shared infrastructure before multi-process deployment.
+
+Start it independently of Streamlit:
+
+```bash
+source .venv/bin/activate
+uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
+Upload a slip, poll the returned opaque job ID, and download a completed report using
+its job-owned opaque file ID:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/jobs \
+  -F "slip=@/absolute/path/to/test-slip.jpg"
+
+curl http://127.0.0.1:8000/api/v1/jobs/JOB_ID
+
+curl -L http://127.0.0.1:8000/api/v1/jobs/JOB_ID/files/FILE_ID \
+  --output report.pdf
+```
+
+The status response never exposes local paths, credentials, extracted document data,
+page content, cookies, or stack traces. Multiple newest-date reports remain separate;
+when the engine creates a ZIP, the response also includes independent bundle metadata.
+The local store removes expired metadata and all owned uploads/reports/bundles during
+job-store activity and explicit cleanup calls.
 
 ## Run locally on macOS
 
@@ -87,6 +121,9 @@ Environment access is centralized in `config/settings.py`.
 | `INTERACTION_AI_MODEL` | empty | Reserved optional local interaction model |
 | `PORTAL_URL_OVERRIDES_JSON` | `{}` | Optional administrator-managed obsolete-host to verified HTTPS portal mapping |
 | `PORTAL_HTTPS_HOST_REWRITES_JSON` | `{}` | Optional HTTP portal hostname to verified HTTPS origin mapping for safe redirects |
+| `BACKEND_MAX_CONCURRENT_JOBS` | `1` | Maximum simultaneous local API retrievals/Chromium sessions |
+| `JOB_TTL_MINUTES` | `30` | Lifetime of local job metadata and owned temporary files |
+| `API_ALLOWED_ORIGINS` | empty | Comma-separated browser origins allowed by CORS; wildcard origins are ignored |
 
 Ollama mode does not read or require an API key. If Ollama is stopped, the app asks the developer to start it. If the configured model has not been downloaded, Developer Mode shows the safe configuration reason.
 
@@ -165,6 +202,8 @@ The automated browser tests use mocks and synthetic semantic snapshots rather th
 ```text
 .
 ├── app.py
+├── backend/                         # FastAPI routes and local job infrastructure
+├── services/                        # UI-independent retrieval service and safe progress models
 ├── config/
 │   └── settings.py                  # Central environment configuration
 ├── document_understanding/

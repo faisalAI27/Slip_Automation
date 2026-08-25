@@ -421,7 +421,9 @@ _render_developer_details(settings)
         app.text_input[0].set_value("reports.example.test")
         with (
             patch("ui.main_page.BrowserExecutor.from_settings") as browser_factory,
-            patch("ui.main_page.RetrievalAgent.from_settings") as retrieval_factory,
+            patch(
+                "services.report_retrieval.RetrievalAgent.from_settings"
+            ) as retrieval_factory,
         ):
             browser_factory.return_value.execute.return_value = _browser_result()
             retrieval_factory.return_value.run.return_value = _verification_result()
