@@ -19,6 +19,7 @@ from openai import (
 from PIL import Image
 
 from config.settings import get_settings
+from document_understanding.credential_focus import CredentialFocusResult
 from document_understanding.gemini_provider import GeminiDocumentVisionProvider
 from document_understanding.models import DocumentUnderstandingResult
 from document_understanding.ollama_provider import OllamaDocumentVisionProvider
@@ -160,6 +161,101 @@ class GeminiProviderTests(unittest.TestCase):
             result = provider.analyze_document(self._image(directory))
 
         self.assertEqual(result.warnings, ["Check image."])
+
+    def test_report_credentials_receive_a_focused_validation_pass(self) -> None:
+        provider, client = self._provider_with_client()
+        payload = _payload()
+        payload["urls"] = [
+            {
+                "url": "https://reports.example.test",
+                "normalized_url": "https://reports.example.test",
+                "context": "Online reports",
+                "likely_purpose": "report_portal",
+                "confidence": "high",
+            }
+        ]
+        payload["fields"] = [
+            {
+                "label": "USER ID",
+                "value": "GENERAL-ID",
+                "semantic_type": "unknown",
+                "confidence": "high",
+            },
+            {
+                "label": "PASSWORD",
+                "value": "GENERAL-PASSWORD",
+                "semantic_type": "unknown",
+                "confidence": "high",
+            },
+        ]
+        focused = CredentialFocusResult.model_validate(
+            {
+                "fields": [
+                    {
+                        "label": "USER ID",
+                        "value": "FOCUSED-ID",
+                        "confidence": "high",
+                    },
+                    {
+                        "label": "PASSWORD",
+                        "value": "FOCUSED-PASSWORD",
+                        "confidence": "high",
+                    },
+                ]
+            }
+        )
+        client.beta.chat.completions.parse.side_effect = [
+            _completion(parsed=DocumentUnderstandingResult.model_validate(payload)),
+            _completion(parsed=focused),
+        ]
+
+        with TemporaryDirectory() as directory:
+            result = provider.analyze_document(self._image(directory))
+
+        fields = {item.label: item for item in result.fields}
+        self.assertEqual(fields["USER ID"].value, "FOCUSED-ID")
+        self.assertEqual(fields["PASSWORD"].value, "FOCUSED-PASSWORD")
+        self.assertEqual(fields["USER ID"].semantic_type.value, "patient_identifier")
+        self.assertEqual(fields["PASSWORD"].semantic_type.value, "access_credential")
+        self.assertEqual(client.beta.chat.completions.parse.call_count, 2)
+        focused_request = client.beta.chat.completions.parse.call_args_list[1].kwargs
+        self.assertIs(focused_request["response_format"], CredentialFocusResult)
+        self.assertEqual(focused_request["reasoning_effort"], "low")
+
+    def test_focused_credential_failure_keeps_valid_general_result(self) -> None:
+        provider, client = self._provider_with_client()
+        payload = _payload()
+        payload["urls"] = [
+            {
+                "url": "https://reports.example.test",
+                "normalized_url": "https://reports.example.test",
+                "context": "Online reports",
+                "likely_purpose": "report_portal",
+                "confidence": "high",
+            }
+        ]
+        payload["fields"] = [
+            {
+                "label": "PASSWORD",
+                "value": "GENERAL-PASSWORD",
+                "semantic_type": "unknown",
+                "confidence": "high",
+            }
+        ]
+        client.beta.chat.completions.parse.side_effect = [
+            _completion(parsed=DocumentUnderstandingResult.model_validate(payload)),
+            APITimeoutError(httpx.Request("POST", GEMINI_BASE_URL)),
+        ]
+
+        with TemporaryDirectory() as directory, self.assertLogs(
+            "document_understanding.gemini_provider", logging.WARNING
+        ) as captured:
+            result = provider.analyze_document(self._image(directory))
+
+        self.assertEqual(result.fields[0].value, "GENERAL-PASSWORD")
+        self.assertEqual(result.fields[0].semantic_type.value, "access_credential")
+        logs = " ".join(captured.output)
+        self.assertNotIn("GENERAL-PASSWORD", logs)
 
     def test_unavailable_parse_uses_validated_json_schema_fallback(self) -> None:
         provider, client = self._provider_with_client()

@@ -15,6 +15,14 @@ from openai import (
     RateLimitError,
 )
 
+from document_understanding.credential_focus import (
+    CREDENTIAL_FOCUS_PROMPT,
+    CredentialFocusResult,
+    focused_fields_from_payload,
+    merge_credential_fields,
+    needs_credential_focus,
+    normalize_explicit_credentials,
+)
 from document_understanding.models import DocumentUnderstandingResult
 from document_understanding.parser import (
     DocumentParseError,
@@ -64,26 +72,31 @@ class GeminiDocumentVisionProvider:
         )
 
     def analyze_document(self, image_path: Path) -> DocumentUnderstandingResult:
-        messages = self._messages(self._image_data_url(image_path))
+        image_url = self._image_data_url(image_path)
+        messages = self._messages(image_url)
         try:
             parsed = self._parse_structured(messages)
         except (AttributeError, NotImplementedError, TypeError):
             logger.info("Gemini structured parse is unavailable; using JSON schema fallback")
-            return self._create_structured_fallback(messages)
+            result = self._create_structured_fallback(messages)
+            return self._finalize_result(image_url, result)
         except APIStatusError as exc:
             if exc.status_code in PARSE_FALLBACK_STATUS_CODES:
                 logger.info(
                     "Gemini structured parse was rejected; using JSON schema fallback"
                 )
-                return self._create_structured_fallback(messages)
+                result = self._create_structured_fallback(messages)
+                return self._finalize_result(image_url, result)
             self._raise_provider_error(exc)
         except Exception as exc:
             self._raise_provider_error(exc)
 
         if parsed is None:
             logger.info("Gemini structured parse was empty; using JSON schema fallback")
-            return self._create_structured_fallback(messages)
-        return self._validate_parsed(parsed)
+            result = self._create_structured_fallback(messages)
+            return self._finalize_result(image_url, result)
+        result = self._validate_parsed(parsed)
+        return self._finalize_result(image_url, result)
 
     @staticmethod
     def _image_data_url(image_path: Path) -> str:
@@ -171,6 +184,60 @@ class GeminiDocumentVisionProvider:
             raise ProviderResponseError(
                 "Gemini returned invalid structured document data."
             ) from exc
+
+    def _finalize_result(
+        self,
+        image_url: str,
+        result: DocumentUnderstandingResult,
+    ) -> DocumentUnderstandingResult:
+        normalized = normalize_explicit_credentials(result)
+        if not needs_credential_focus(normalized):
+            return normalized
+        return self._supplement_credentials(image_url, normalized)
+
+    def _supplement_credentials(
+        self,
+        image_url: str,
+        result: DocumentUnderstandingResult,
+    ) -> DocumentUnderstandingResult:
+        messages = [
+            {"role": "system", "content": CREDENTIAL_FOCUS_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Read only the explicitly labeled report-login fields.",
+                    },
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            },
+        ]
+        try:
+            completion = self._request_with_transient_retry(
+                lambda: self._client.beta.chat.completions.parse(
+                    model=self._model,
+                    messages=messages,
+                    response_format=CredentialFocusResult,
+                    reasoning_effort=self._reasoning_effort,
+                )
+            )
+            if not completion.choices:
+                return result
+            parsed = completion.choices[0].message.parsed
+            additions = focused_fields_from_payload(parsed)
+        except Exception as exc:
+            logger.warning(
+                "Focused credential extraction was unavailable: %s",
+                type(exc).__name__,
+            )
+            return result
+
+        if not additions:
+            return result
+        merged = merge_credential_fields(result.fields, additions)
+        logger.info("Focused report-access field check completed")
+        return result.model_copy(update={"fields": merged})
 
     @staticmethod
     def _request_with_transient_retry(operation: Callable[[], ResultT]) -> ResultT:
