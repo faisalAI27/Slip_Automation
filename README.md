@@ -1,5 +1,8 @@
 # Get My Lab Report — Phase 5 + reusable API
 
+The Prompt 3 Android mock client lives in [`mobile/`](mobile/README.md). It is
+currently UI-only and does not call the live backend.
+
 This Streamlit app accepts a hospital or laboratory slip image, turns it into a validated semantic representation, builds a deterministic retrieval plan, and uses one bounded private browser session to retrieve a validated PDF or image report when the portal supports safe automation. Document understanding can use Gemini for faster cloud inference, Ollama for local inference, or the existing OpenAI provider. Browser interaction remains deterministic.
 
 > **Current status:** Phases 1–4 upload, understand, plan, and observe. Phase 5 continues from `BROWSER_OBSERVATION_READY`, semantically maps document fields to observed website fields, performs at most one authentication submission, and captures only validated PDF or image reports. A single newest-date report is prepared on its own; when several reports share the newest date, each is retained separately and an optional ZIP is also prepared. CAPTCHA, OTP, undated ambiguous choices, missing fields, unsafe domains, and unsupported portal designs cause a controlled stop.
