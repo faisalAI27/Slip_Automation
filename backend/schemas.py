@@ -51,3 +51,15 @@ class JobStatusResponse(ApiModel):
     bundle_available: bool = False
     bundle: BundleFileResponse | None = None
     failure_type: str | None = None
+
+
+class RetrievalResultResponse(ApiModel):
+    result_id: str
+    status: JobStatus
+    stage: ProgressStage
+    message: str = Field(min_length=1, max_length=160)
+    created_at: datetime
+    reports: list[ReportFileResponse] = Field(default_factory=list)
+    bundle_available: bool = False
+    bundle: BundleFileResponse | None = None
+    failure_type: str | None = None

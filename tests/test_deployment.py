@@ -25,10 +25,12 @@ class ProductionConfigurationTests(unittest.TestCase):
             get_settings(),
             app_env="production",
             debug_mode=False,
+            port=8080,
             document_ai_provider="gemini",
             gemini_api_key="test-only-value",
             browser_headless=True,
             allow_insecure_report_portals=False,
+            backend_execution_mode="synchronous",
             backend_max_concurrent_jobs=1,
             job_ttl_minutes=30,
         )
@@ -42,6 +44,7 @@ class ProductionConfigurationTests(unittest.TestCase):
             replace(self.secure, browser_headless=False),
             replace(self.secure, allow_insecure_report_portals=True),
             replace(self.secure, gemini_api_key=None),
+            replace(self.secure, backend_execution_mode="invalid"),
         )
 
         for settings in invalid_settings:
@@ -58,9 +61,19 @@ class ProductionConfigurationTests(unittest.TestCase):
         self.assertIn("playwright==1.62.0", requirements)
         self.assertIn("USER pwuser", dockerfile)
         self.assertIn("--workers 1", dockerfile)
+        self.assertIn("PORT=8080", dockerfile)
+        self.assertIn("EXPOSE 8080", dockerfile)
+        self.assertIn('${PORT:-8080}', dockerfile)
+        self.assertIn("BACKEND_EXECUTION_MODE=synchronous", dockerfile)
         self.assertNotIn("GEMINI_API_KEY", dockerfile)
         self.assertNotIn("--no-sandbox", dockerfile)
         self.assertNotIn("alpine", dockerfile.casefold())
+        self.assertNotIn("streamlit", requirements.casefold())
+
+        cloud_run_environment = (PROJECT_ROOT / "cloud-run.env.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("GEMINI_API_KEY", cloud_run_environment)
 
     def test_docker_context_excludes_environment_files(self) -> None:
         ignored = (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8")
@@ -88,6 +101,21 @@ class ProductionConfigurationTests(unittest.TestCase):
 
 
 class BackendLifecycleTests(unittest.TestCase):
+    def test_health_does_not_create_ai_service_or_browser(self) -> None:
+        app = create_app()
+        with (
+            patch("browser_agent.session.sync_playwright") as playwright,
+            patch(
+                "backend.dependencies.ReportRetrievalService.from_settings"
+            ) as service_factory,
+            TestClient(app) as client,
+        ):
+            response = client.get("/health")
+
+        self.assertEqual(response.status_code, 200)
+        service_factory.assert_not_called()
+        playwright.assert_not_called()
+
     def test_startup_health_and_graceful_shutdown_hooks_run(self) -> None:
         app = create_app()
         with (
@@ -107,22 +135,26 @@ class BackendLifecycleTests(unittest.TestCase):
         calls: list[object] = []
         runner = MagicMock()
         store = MagicMock()
+        result_store = MagicMock()
         runner.shutdown.side_effect = lambda *, wait: calls.append(("runner", wait))
         store.cleanup_all.side_effect = lambda: calls.append("store")
+        result_store.cleanup_all.side_effect = lambda: calls.append("results")
 
-        shutdown_backend_resources(runner, store)
+        shutdown_backend_resources(runner, store, result_store)
 
-        self.assertEqual(calls, [("runner", True), "store"])
+        self.assertEqual(calls, [("runner", True), "store", "results"])
 
     def test_shutdown_cleans_store_even_when_runner_shutdown_fails(self) -> None:
         runner = MagicMock()
         store = MagicMock()
+        result_store = MagicMock()
         runner.shutdown.side_effect = RuntimeError("executor failure")
 
         with self.assertRaises(RuntimeError):
-            shutdown_backend_resources(runner, store)
+            shutdown_backend_resources(runner, store, result_store)
 
         store.cleanup_all.assert_called_once_with()
+        result_store.cleanup_all.assert_called_once_with()
 
     def test_local_runner_drains_active_and_cancels_queued_jobs(self) -> None:
         runner = LocalJobRunner(max_concurrent_jobs=1)

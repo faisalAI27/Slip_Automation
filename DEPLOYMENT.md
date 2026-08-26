@@ -3,6 +3,10 @@
 This deployment runs only the FastAPI backend. Streamlit is not installed in the
 production image and does not need to be running.
 
+For the request-bound, scale-to-zero Google Cloud Run prototype, see
+[`CLOUD_RUN.md`](CLOUD_RUN.md). The instructions below describe the existing
+persistent-host/background-job deployment.
+
 ## Supported topology
 
 **Single persistent instance → supported MVP deployment.** The current
@@ -30,13 +34,14 @@ set the selected provider, its model, and the Gemini secret:
 ```env
 APP_ENV=production
 DEBUG_MODE=false
-PORT=8000
+PORT=8080
 
 DOCUMENT_AI_PROVIDER=gemini
 DOCUMENT_AI_MODEL=gemini-3.7-flash
 GEMINI_API_KEY=replace_with_secret_manager_value
 
 BROWSER_HEADLESS=true
+BACKEND_EXECUTION_MODE=background
 BACKEND_MAX_CONCURRENT_JOBS=1
 JOB_TTL_MINUTES=30
 ALLOW_INSECURE_REPORT_PORTALS=false
@@ -52,15 +57,16 @@ The original liveness-only command remains valid:
 
 ```bash
 docker run --rm \
-  -p 8000:8000 \
+  -p 8080:8080 \
   --env-file .env \
+  -e PORT=8080 \
   slip-api
 ```
 
 Then verify liveness:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8080/health
 ```
 
 For report retrieval, run the non-root Chromium sandbox with the version-matched
@@ -68,9 +74,10 @@ Playwright seccomp profile included in this repository:
 
 ```bash
 docker run --rm \
-  -p 8000:8000 \
+  -p 8080:8080 \
   --security-opt seccomp=seccomp_profile.json \
   --env-file .env \
+  -e PORT=8080 \
   slip-api
 ```
 

@@ -27,13 +27,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    PORT=8000 \
+    PORT=8080 \
     APP_ENV=production \
     DEBUG_MODE=false \
     TEMP_DIR=/tmp/slip-automation \
     DOCUMENT_AI_PROVIDER=gemini \
     DOCUMENT_AI_MODEL=gemini-3.7-flash \
     BROWSER_HEADLESS=true \
+    BACKEND_EXECUTION_MODE=synchronous \
     BACKEND_MAX_CONCURRENT_JOBS=1 \
     JOB_TTL_MINUTES=30 \
     ALLOW_INSECURE_REPORT_PORTALS=false
@@ -74,11 +75,11 @@ RUN install -d -o pwuser -g pwuser -m 0700 \
 
 USER pwuser
 
-EXPOSE 8000
+EXPOSE 8080
 STOPSIGNAL SIGTERM
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.getenv('PORT', '8000') + '/health', timeout=4)"
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.getenv('PORT', '8080') + '/health', timeout=4)"
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["sh", "-c", "exec uvicorn backend.main:app --host 0.0.0.0 --port \"${PORT:-8000}\" --workers 1"]
+CMD ["sh", "-c", "exec uvicorn backend.main:app --host 0.0.0.0 --port \"${PORT:-8080}\" --workers 1"]

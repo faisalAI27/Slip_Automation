@@ -3,12 +3,14 @@
 from contextlib import asynccontextmanager
 
 import anyio
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from backend.dependencies import get_job_runner, get_job_store
+from backend.dependencies import get_job_runner, get_job_store, get_result_store
 from backend.jobs import JobRunner, JobStore
 from backend.routes.reports import router as reports_router
+from backend.routes.synchronous import router as synchronous_router
 from backend.schemas import HealthResponse
 from config.settings import Settings, get_settings
 from utils.file_utils import cleanup_stale_files, ensure_temp_directory
@@ -19,6 +21,10 @@ logger = get_logger(__name__)
 
 def validate_production_settings(settings: Settings) -> None:
     """Fail startup rather than silently weaken a production deployment."""
+    if settings.backend_execution_mode not in {"background", "synchronous"}:
+        raise RuntimeError(
+            "BACKEND_EXECUTION_MODE must be 'background' or 'synchronous'."
+        )
     if settings.app_env.casefold() != "production":
         return
     if settings.debug_mode:
@@ -47,25 +53,34 @@ def initialize_backend(settings: Settings) -> None:
 def shutdown_backend_resources(
     runner: JobRunner | None,
     store: JobStore | None,
+    result_store: JobStore | None = None,
 ) -> None:
     """Drain the active job, cancel queued jobs, then remove unreachable files."""
     try:
         if runner is not None:
             runner.shutdown(wait=True)
     finally:
-        if store is not None:
-            store.cleanup_all()
+        try:
+            if store is not None:
+                store.cleanup_all()
+        finally:
+            if result_store is not None:
+                result_store.cleanup_all()
 
 
 def shutdown_cached_backend_resources() -> None:
     """Close only resources that were materialized by this application process."""
     runner = get_job_runner() if get_job_runner.cache_info().currsize else None
     store = get_job_store() if get_job_store.cache_info().currsize else None
+    result_store = (
+        get_result_store() if get_result_store.cache_info().currsize else None
+    )
     try:
-        shutdown_backend_resources(runner, store)
+        shutdown_backend_resources(runner, store, result_store)
     finally:
         get_job_runner.cache_clear()
         get_job_store.cache_clear()
+        get_result_store.cache_clear()
     logger.info("Backend application stopped")
 
 
@@ -90,12 +105,22 @@ def create_app() -> FastAPI:
         lifespan=backend_lifespan,
     )
     api.state.accepting_jobs = True
+
+    @api.exception_handler(Exception)
+    async def safe_unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+        del request
+        logger.error("Unhandled API request failed: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "The request could not be completed."},
+        )
+
     if settings.api_allowed_origins:
         api.add_middleware(
             CORSMiddleware,
             allow_origins=list(settings.api_allowed_origins),
             allow_credentials=True,
-            allow_methods=["GET", "POST"],
+            allow_methods=["GET", "POST", "DELETE"],
             allow_headers=["Content-Type"],
         )
 
@@ -104,6 +129,7 @@ def create_app() -> FastAPI:
         return HealthResponse()
 
     api.include_router(reports_router)
+    api.include_router(synchronous_router)
     return api
 
 

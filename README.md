@@ -128,6 +128,7 @@ Environment access is centralized in `config/settings.py`.
 | `INTERACTION_AI_MODEL` | empty | Reserved optional local interaction model |
 | `PORTAL_URL_OVERRIDES_JSON` | `{}` | Optional administrator-managed obsolete-host to verified HTTPS portal mapping |
 | `PORTAL_HTTPS_HOST_REWRITES_JSON` | `{}` | Optional HTTP portal hostname to verified HTTPS origin mapping for safe redirects |
+| `BACKEND_EXECUTION_MODE` | `background` | `background` for the local job API; `synchronous` for request-bound Cloud Run retrieval |
 | `BACKEND_MAX_CONCURRENT_JOBS` | `1` | Maximum simultaneous local API retrievals/Chromium sessions |
 | `JOB_TTL_MINUTES` | `30` | Lifetime of local job metadata and owned temporary files |
 | `API_ALLOWED_ORIGINS` | empty | Comma-separated browser origins allowed by CORS; wildcard origins are ignored |

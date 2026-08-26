@@ -21,6 +21,16 @@ def get_job_store() -> JobStore:
 
 
 @lru_cache(maxsize=1)
+def get_result_store() -> JobStore:
+    """Separate ephemeral mapping for request-bound synchronous retrievals."""
+    settings = get_settings()
+    return LocalJobStore(
+        temp_dir=settings.temp_dir,
+        ttl_minutes=settings.job_ttl_minutes,
+    )
+
+
+@lru_cache(maxsize=1)
 def get_job_runner() -> JobRunner:
     return LocalJobRunner(get_settings().backend_max_concurrent_jobs)
 

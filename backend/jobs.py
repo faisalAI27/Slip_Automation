@@ -74,6 +74,10 @@ class JobStore(Protocol):
 
     def get_file(self, job_id: str, file_id: str) -> JobFile | None: ...
 
+    def discard_upload(self, job_id: str) -> None: ...
+
+    def delete(self, job_id: str) -> bool: ...
+
     def cleanup_expired(self) -> int: ...
 
     def cleanup_all(self) -> int: ...
@@ -212,6 +216,25 @@ class LocalJobStore:
             if resolved.parent != self._temp_dir or not resolved.is_file():
                 return None
             return deepcopy(job_file)
+
+    def discard_upload(self, job_id: str) -> None:
+        """Remove an uploaded slip as soon as retrieval no longer needs it."""
+        with self._lock:
+            record = self._jobs.get(job_id)
+            if record is None:
+                return
+            upload_path = record.upload_path
+            record.upload_path = None
+        remove_files([upload_path], self._temp_dir)
+
+    def delete(self, job_id: str) -> bool:
+        """Remove one record and every temporary file it owns."""
+        with self._lock:
+            record = self._jobs.pop(job_id, None)
+            if record is None:
+                return False
+            self._remove_record_files([record])
+            return True
 
     def cleanup_expired(self) -> int:
         with self._lock:

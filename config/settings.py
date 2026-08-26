@@ -51,6 +51,7 @@ def _as_origins(value: str | None) -> tuple[str, ...]:
 class Settings:
     app_env: str
     debug_mode: bool
+    port: int
     temp_dir: Path
     temp_file_max_age_hours: int
     max_upload_mb: int
@@ -79,6 +80,7 @@ class Settings:
     portal_url_overrides: dict[str, str]
     portal_https_host_rewrites: dict[str, str]
     allow_insecure_report_portals: bool
+    backend_execution_mode: str
     backend_max_concurrent_jobs: int
     job_ttl_minutes: int
     api_allowed_origins: tuple[str, ...]
@@ -95,6 +97,7 @@ def get_settings() -> Settings:
     return Settings(
         app_env=os.getenv("APP_ENV", "development"),
         debug_mode=_as_bool(os.getenv("DEBUG_MODE"), default=False),
+        port=max(1, min(65535, int(os.getenv("PORT", "8080")))),
         temp_dir=temp_dir.resolve(),
         temp_file_max_age_hours=int(os.getenv("TEMP_FILE_MAX_AGE_HOURS", "24")),
         max_upload_mb=int(os.getenv("MAX_UPLOAD_MB", "12")),
@@ -159,6 +162,9 @@ def get_settings() -> Settings:
         allow_insecure_report_portals=_as_bool(
             os.getenv("ALLOW_INSECURE_REPORT_PORTALS"), default=False
         ),
+        backend_execution_mode=os.getenv(
+            "BACKEND_EXECUTION_MODE", "background"
+        ).strip().casefold(),
         backend_max_concurrent_jobs=max(
             1, int(os.getenv("BACKEND_MAX_CONCURRENT_JOBS", "1"))
         ),

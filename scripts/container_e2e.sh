@@ -56,6 +56,7 @@ docker run --detach --rm \
   -e DEBUG_MODE=false \
   -e PORT=8000 \
   -e BROWSER_HEADLESS=true \
+  -e BACKEND_EXECUTION_MODE=background \
   -e BACKEND_MAX_CONCURRENT_JOBS=1 \
   -e JOB_TTL_MINUTES=30 \
   -e ALLOW_INSECURE_REPORT_PORTALS=false \
