@@ -1,3 +1,4 @@
+import json
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -67,6 +68,23 @@ class ProductionConfigurationTests(unittest.TestCase):
         self.assertIn(".env\n", ignored)
         self.assertIn(".env.*", ignored)
         self.assertIn("!.env.example", ignored)
+
+    def test_playwright_seccomp_profile_enables_user_namespace_sandbox(self) -> None:
+        profile = json.loads(
+            (PROJECT_ROOT / "seccomp_profile.json").read_text(encoding="utf-8")
+        )
+        sandbox_rules = [
+            rule
+            for rule in profile["syscalls"]
+            if {"clone", "setns", "unshare"}.issubset(rule.get("names", []))
+            and rule.get("action") == "SCMP_ACT_ALLOW"
+        ]
+        e2e_script = (PROJECT_ROOT / "scripts" / "container_e2e.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertTrue(sandbox_rules)
+        self.assertIn('--security-opt "seccomp=$SECCOMP_PROFILE"', e2e_script)
 
 
 class BackendLifecycleTests(unittest.TestCase):

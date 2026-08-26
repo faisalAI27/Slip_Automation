@@ -1,7 +1,26 @@
 # syntax=docker/dockerfile:1.7
 
 # The manifest-list digest and Python package are intentionally version-matched.
-FROM mcr.microsoft.com/playwright/python:v1.62.0-noble@sha256:aa81288e738725378becba5b3e06cb0f3a7f012a610e87e8d767a090ea3f740d
+ARG PLAYWRIGHT_IMAGE=mcr.microsoft.com/playwright/python:v1.62.0-noble@sha256:aa81288e738725378becba5b3e06cb0f3a7f012a610e87e8d767a090ea3f740d
+
+FROM ${PLAYWRIGHT_IMAGE} AS dependency-builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /build
+
+# zxing-cpp does not publish a CPython 3.12 ARM64 wheel. Keep its compiler and
+# header requirements in this disposable stage rather than the runtime image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-backend.txt ./requirements-backend.txt
+RUN python -m pip wheel --no-cache-dir --wheel-dir=/wheels \
+        -r requirements-backend.txt
+
+FROM ${PLAYWRIGHT_IMAGE} AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -28,15 +47,15 @@ USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tini \
     && rm -rf /var/lib/apt/lists/* \
-    && chown -R root:root /ms-playwright \
-    && chmod -R go-w /ms-playwright \
     && find /ms-playwright -type f \
         \( -name chrome_sandbox -o -name chrome-sandbox \) \
         -exec chown root:root {} + \
         -exec chmod 4755 {} +
 
 COPY requirements-backend.txt ./requirements-backend.txt
-RUN python -m pip install --no-cache-dir -r requirements-backend.txt \
+RUN --mount=type=bind,from=dependency-builder,source=/wheels,target=/wheels,ro \
+    python -m pip install --no-cache-dir --no-index --find-links=/wheels \
+        -r requirements-backend.txt \
     && python -c "from importlib.metadata import version; assert version('playwright') == '1.62.0'"
 
 # Only backend/runtime modules are copied; Streamlit is not part of this process.
@@ -49,7 +68,8 @@ COPY services ./services
 COPY utils ./utils
 COPY workflow ./workflow
 
-RUN install -d -o pwuser -g pwuser -m 0700 /tmp/slip-automation \
+RUN install -d -o pwuser -g pwuser -m 0700 \
+        /tmp/slip-automation /app/temp \
     && test "$(id -u pwuser)" -ne 0
 
 USER pwuser

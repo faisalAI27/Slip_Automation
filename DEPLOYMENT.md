@@ -48,7 +48,7 @@ verified HTTPS URL rewrites. Keep `PORTAL_URL_OVERRIDES_JSON` and
 `PORTAL_HTTPS_HOST_REWRITES_JSON` empty unless an administrator has verified the
 target HTTPS origins.
 
-Run the container:
+The original liveness-only command remains valid:
 
 ```bash
 docker run --rm \
@@ -62,6 +62,23 @@ Then verify liveness:
 ```bash
 curl http://localhost:8000/health
 ```
+
+For report retrieval, run the non-root Chromium sandbox with the version-matched
+Playwright seccomp profile included in this repository:
+
+```bash
+docker run --rm \
+  -p 8000:8000 \
+  --security-opt seccomp=seccomp_profile.json \
+  --env-file .env \
+  slip-api
+```
+
+The additional profile is required for Chromium, not for `/health`. It is the
+official Playwright Docker profile: Docker's normal syscall policy plus the user
+namespace operations `clone`, `setns`, and `unshare`. Use an equivalent policy
+on a deployment platform that does not accept Docker's `--security-opt` syntax.
+Do not replace it with `--no-sandbox` or a TLS/security bypass.
 
 The image always starts one Uvicorn worker. `PORT` is configurable, but the
 published host/container port pair must match it. Allow up to 120 seconds for a
@@ -87,9 +104,11 @@ The image uses Ubuntu Noble rather than Alpine. It pins the official Playwright
 Python image, its manifest digest, and `playwright==1.62.0`; this keeps the Python
 driver and installed Chromium revision aligned. The application runs as the
 image's non-root `pwuser`, explicitly enables Chromium sandboxing, and never adds
-`--no-sandbox`. The SUID sandbox helper is root-owned and hardened during build.
-`--disable-dev-shm-usage` makes the requested plain `docker run` command reliable
-without a desktop session or special shared-memory flag.
+`--no-sandbox`. `seccomp_profile.json` is pinned from Playwright 1.62.0 and
+permits the browser's user-namespace sandbox under Docker's syscall filtering.
+The image also hardens the available SUID sandbox helper. The
+`--disable-dev-shm-usage` browser setting avoids requiring a desktop session or
+special shared-memory flag.
 
 ## Full container smoke test
 

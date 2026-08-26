@@ -9,6 +9,7 @@ fi
 SLIP_PATH=$1
 IMAGE_NAME=${IMAGE_NAME:-slip-api}
 ENV_FILE=${ENV_FILE:-.env}
+SECCOMP_PROFILE=${SECCOMP_PROFILE:-seccomp_profile.json}
 HOST_PORT=${HOST_PORT:-18000}
 CONTAINER_NAME="slip-api-e2e-$$"
 BASE_URL="http://127.0.0.1:${HOST_PORT}"
@@ -32,6 +33,10 @@ command -v docker >/dev/null || {
   echo "Environment file not found: $ENV_FILE" >&2
   exit 66
 }
+[[ -f "$SECCOMP_PROFILE" ]] || {
+  echo "Playwright seccomp profile not found: $SECCOMP_PROFILE" >&2
+  exit 66
+}
 
 docker build -t "$IMAGE_NAME" .
 docker image inspect --format '{{json .Config.Env}}' "$IMAGE_NAME" \
@@ -45,6 +50,7 @@ docker run --detach --rm \
   --name "$CONTAINER_NAME" \
   --stop-timeout 120 \
   -p "${HOST_PORT}:8000" \
+  --security-opt "seccomp=$SECCOMP_PROFILE" \
   --env-file "$ENV_FILE" \
   -e APP_ENV=production \
   -e DEBUG_MODE=false \
