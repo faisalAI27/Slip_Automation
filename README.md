@@ -1,7 +1,9 @@
 # Get My Lab Report — Phase 5 + reusable API
 
-The Prompt 3 Android mock client lives in [`mobile/`](mobile/README.md). It is
-currently UI-only and does not call the live backend.
+The Android client lives in [`mobile/`](mobile/README.md). It uploads slips to
+the FastAPI backend, retrieves report files, and opens or saves them on the phone.
+A GitHub Actions workflow builds a test APK without installing Android Studio
+on the development machine. See the mobile README for USB and HTTPS setup.
 
 This Streamlit app accepts a hospital or laboratory slip image, turns it into a validated semantic representation, builds a deterministic retrieval plan, and uses one bounded private browser session to retrieve a validated PDF or image report when the portal supports safe automation. Document understanding can use Gemini for faster cloud inference, Ollama for local inference, or the existing OpenAI provider. Browser interaction remains deterministic.
 
@@ -124,9 +126,10 @@ Environment access is centralized in `config/settings.py`.
 | `AGENT_MAX_WAIT_SECONDS` | `8` | Maximum configured bounded wait |
 | `MAX_REPORT_DOWNLOAD_MB` | `25` | Maximum accepted PDF or image report size |
 | `ALLOW_INSECURE_REPORT_PORTALS` | `false` | Explicit local-only opt-in for a verified legacy HTTP report portal |
+| `INSECURE_REPORT_PORTAL_HOSTS` | empty | Comma-separated exact legacy HTTP hosts explicitly approved to receive report-access fields |
 | `INTERACTION_AI_PROVIDER` | `deterministic` | Reserved optional interaction-reasoning provider; V1 uses deterministic rules |
 | `INTERACTION_AI_MODEL` | empty | Reserved optional local interaction model |
-| `PORTAL_URL_OVERRIDES_JSON` | `{}` | Optional administrator-managed obsolete-host to verified HTTPS portal mapping |
+| `PORTAL_URL_OVERRIDES_JSON` | `{}` | Optional administrator-managed portal-host to verified report-service mapping |
 | `PORTAL_HTTPS_HOST_REWRITES_JSON` | `{}` | Optional HTTP portal hostname to verified HTTPS origin mapping for safe redirects |
 | `BACKEND_EXECUTION_MODE` | `background` | `background` for the local job API; `synchronous` for request-bound Cloud Run retrieval |
 | `BACKEND_MAX_CONCURRENT_JOBS` | `1` | Maximum simultaneous local API retrievals/Chromium sessions |

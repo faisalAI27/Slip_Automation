@@ -616,6 +616,53 @@ class RetrievalAgentTests(unittest.TestCase):
         self.assertEqual(tools.clicks, ["button_2"])
         self.assertEqual(tools.downloads, ["link_1"])
 
+    def test_undated_navigation_does_not_obscure_latest_dated_report(self) -> None:
+        tools = FakeTools(
+            [
+                _observation(
+                    PageType.REPORT_LIST_PAGE,
+                    buttons=[
+                        ButtonObservation(
+                            element_id="button_1",
+                            text="Report",
+                            html_type="button",
+                            disabled=False,
+                            semantic_action=ButtonSemanticAction.VIEW_REPORT,
+                            report_date="2025-08-24",
+                        ),
+                        ButtonObservation(
+                            element_id="button_2",
+                            text="Report",
+                            html_type="button",
+                            disabled=False,
+                            semantic_action=ButtonSemanticAction.VIEW_REPORT,
+                            report_date="2026-08-24",
+                        ),
+                    ],
+                    links=[
+                        LinkObservation(
+                            element_id="link_9",
+                            text="Results home",
+                            url="https://reports.example.test/results",
+                            domain="example.test",
+                            same_domain=True,
+                            likely_purpose=LinkPurpose.RESULTS,
+                        )
+                    ],
+                ),
+                _observation(
+                    PageType.REPORT_VIEWER,
+                    downloads=[_download()],
+                ),
+            ]
+        )
+
+        result = self._run(tools)
+
+        self.assertEqual(result.status, RetrievalStatus.DOWNLOADED)
+        self.assertEqual(tools.clicks, ["button_2"])
+        self.assertEqual(tools.downloads, ["link_1"])
+
     def test_latest_dated_view_link_is_opened_instead_of_downloaded_as_index(self) -> None:
         links = [
             LinkObservation(

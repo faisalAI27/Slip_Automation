@@ -107,6 +107,7 @@ class RetrievalAgent:
                     max_results=settings.browser_max_search_results
                 ),
                 allow_insecure_http=settings.allow_insecure_report_portals,
+                insecure_http_hosts=set(settings.insecure_report_portal_hosts),
             )
 
         return cls(
@@ -1167,10 +1168,26 @@ class RetrievalAgent:
                 LinkPurpose.LOGIN,
             }
         ]
-        return [*buttons, *links]
+        candidates = [*buttons, *links]
+        # Report index pages often retain undated navigation links (home,
+        # results, logout) beside the dated report actions.  Once the page has
+        # identified dated report controls, those controls are the only valid
+        # candidates for the "latest report" workflow; including the generic
+        # links makes an otherwise deterministic newest-date choice ambiguous.
+        if observation.page_type == PageType.REPORT_LIST_PAGE:
+            dated = [
+                item
+                for item in candidates
+                if getattr(item, "report_date", None) is not None
+            ]
+            if dated:
+                return dated
+        return candidates
 
     @staticmethod
     def _tied_latest(candidates: list[object]) -> list[object]:
+        if any(getattr(item, "report_date", None) is None for item in candidates):
+            return []
         dated = [
             item
             for item in candidates
@@ -1188,6 +1205,8 @@ class RetrievalAgent:
 
     @staticmethod
     def _unique_latest(candidates: list[object]):
+        if any(getattr(item, "report_date", None) is None for item in candidates):
+            return None
         dated = [
             item
             for item in candidates
