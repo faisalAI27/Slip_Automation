@@ -6,10 +6,21 @@ import ipaddress
 import socket
 from urllib.parse import urlsplit, urlunsplit
 
+from tldextract import TLDExtract
+
 from browser_agent.errors import UnsafeNavigationError
 
 
 AddressResolver = Callable[[str, int], Iterable[str]]
+
+# Use the packaged PSL snapshot, including tenant boundaries such as github.io.
+# No network fetch or shared writable cache is needed during a retrieval.
+_extract_domain = TLDExtract(
+    suffix_list_urls=(),
+    cache_dir=None,
+    include_psl_private_domains=True,
+    extra_suffixes=["test", "example", "invalid"],
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,28 +56,16 @@ def _is_public_address(value: str) -> bool:
 
 
 def registrable_domain(hostname: str) -> str:
-    """Return a conservative effective domain for informational redirect warnings."""
-
+    """Return the PSL tenant boundary used by credential and download checks."""
     host = hostname.rstrip(".").casefold()
-    labels = [label for label in host.split(".") if label]
-    if len(labels) <= 2:
+    try:
+        ipaddress.ip_address(host)
         return host
-    multi_label_suffixes = {
-        "co.uk",
-        "org.uk",
-        "com.au",
-        "com.pk",
-        "com.sg",
-        "co.in",
-        "co.nz",
-        "co.za",
-        "edu.pk",
-        "gov.pk",
-        "net.pk",
-        "org.pk",
-    }
-    suffix = ".".join(labels[-2:])
-    return ".".join(labels[-3:]) if suffix in multi_label_suffixes else suffix
+    except ValueError:
+        pass
+    extracted = _extract_domain(host)
+    # Unknown suffixes must not widen trust to sibling hosts.
+    return extracted.top_domain_under_public_suffix or host
 
 
 def redact_url_for_display(value: str) -> str:

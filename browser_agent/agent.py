@@ -1171,6 +1171,8 @@ class RetrievalAgent:
 
     @staticmethod
     def _tied_latest(candidates: list[object]) -> list[object]:
+        if any(getattr(item, "report_date", None) is None for item in candidates):
+            return []
         dated = [
             item
             for item in candidates
@@ -1188,6 +1190,8 @@ class RetrievalAgent:
 
     @staticmethod
     def _unique_latest(candidates: list[object]):
+        if any(getattr(item, "report_date", None) is None for item in candidates):
+            return None
         dated = [
             item
             for item in candidates

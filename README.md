@@ -1,7 +1,9 @@
 # Get My Lab Report — Phase 5 + reusable API
 
-The Prompt 3 Android mock client lives in [`mobile/`](mobile/README.md). It is
-currently UI-only and does not call the live backend.
+The Android client lives in [`mobile/`](mobile/README.md). It uploads slips to
+the FastAPI backend, retrieves report files, and opens or saves them on the phone.
+A GitHub Actions workflow builds a test APK without installing Android Studio
+on the development machine. See the mobile README for USB and HTTPS setup.
 
 This Streamlit app accepts a hospital or laboratory slip image, turns it into a validated semantic representation, builds a deterministic retrieval plan, and uses one bounded private browser session to retrieve a validated PDF or image report when the portal supports safe automation. Document understanding can use Gemini for faster cloud inference, Ollama for local inference, or the existing OpenAI provider. Browser interaction remains deterministic.
 
