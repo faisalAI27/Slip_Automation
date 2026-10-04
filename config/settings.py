@@ -47,6 +47,18 @@ def _as_origins(value: str | None) -> tuple[str, ...]:
     )
 
 
+def _as_hosts(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    return tuple(
+        dict.fromkeys(
+            host.strip().rstrip(".").casefold()
+            for host in value.split(",")
+            if host.strip()
+        )
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     app_env: str
@@ -80,6 +92,7 @@ class Settings:
     portal_url_overrides: dict[str, str]
     portal_https_host_rewrites: dict[str, str]
     allow_insecure_report_portals: bool
+    insecure_report_portal_hosts: tuple[str, ...]
     backend_execution_mode: str
     backend_max_concurrent_jobs: int
     job_ttl_minutes: int
@@ -161,6 +174,9 @@ def get_settings() -> Settings:
         ),
         allow_insecure_report_portals=_as_bool(
             os.getenv("ALLOW_INSECURE_REPORT_PORTALS"), default=False
+        ),
+        insecure_report_portal_hosts=_as_hosts(
+            os.getenv("INSECURE_REPORT_PORTAL_HOSTS")
         ),
         backend_execution_mode=os.getenv(
             "BACKEND_EXECUTION_MODE", "background"

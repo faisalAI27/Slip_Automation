@@ -77,7 +77,7 @@ values. Cloud Run supplies `PORT=8080`. The complete runtime configuration is:
 | `MAX_UPLOAD_MB` | `12` | Recommended bound |
 | `LOG_LEVEL` | `INFO` | Recommended |
 | `DOCUMENT_AI_PROVIDER` | `gemini` | Required |
-| `DOCUMENT_AI_MODEL` | `gemini-3.7-flash` | Required; preserve a verified model override |
+| `DOCUMENT_AI_MODEL` | `gemini-3.5-flash-lite` | Required; matches the model verified by the local live retrieval |
 | `GEMINI_API_KEY` | Secret Manager reference | Required secret; never put in files or image config |
 | `GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/openai/` | Required for current provider |
 | `GEMINI_TIMEOUT_SECONDS` | `60` | Recommended |
@@ -94,9 +94,10 @@ values. Cloud Run supplies `PORT=8080`. The complete runtime configuration is:
 | `MAX_REPORT_DOWNLOAD_MB` | `25` | Recommended bound |
 | `INTERACTION_AI_PROVIDER` | `deterministic` | Required for current engine |
 | `INTERACTION_AI_MODEL` | empty | Optional/reserved |
-| `PORTAL_URL_OVERRIDES_JSON` | `{}` | Optional; only administrator-verified HTTPS mappings |
+| `PORTAL_URL_OVERRIDES_JSON` | RMI direct login mapping | Avoids the nondeterministic public-site popup and opens the verified report service directly |
 | `PORTAL_HTTPS_HOST_REWRITES_JSON` | `{}` | Optional; only administrator-verified HTTPS rewrites |
-| `ALLOW_INSECURE_REPORT_PORTALS` | `false` | Required and startup-enforced |
+| `INSECURE_REPORT_PORTAL_HOSTS` | `rmi.olivecliq.org` | Exact administrator-approved legacy host; its report application is unavailable over HTTPS |
+| `ALLOW_INSECURE_REPORT_PORTALS` | `false` | Global development override remains disabled and startup-enforced |
 | `BACKEND_EXECUTION_MODE` | `synchronous` | Required for this Cloud Run prototype |
 | `BACKEND_MAX_CONCURRENT_JOBS` | `1` | Kept safe for local job mode |
 | `JOB_TTL_MINUTES` | `30` | Recommended ephemeral result lifetime |

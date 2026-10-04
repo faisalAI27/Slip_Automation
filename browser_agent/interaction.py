@@ -152,9 +152,15 @@ class InteractionSafetyValidator:
         field_store: DocumentFieldStore,
         *,
         allow_insecure_http: bool = False,
+        insecure_http_hosts: set[str] | None = None,
     ) -> None:
         self._field_store = field_store
         self._allow_insecure_http = allow_insecure_http
+        self._insecure_http_hosts = {
+            host.strip().rstrip(".").casefold()
+            for host in (insecure_http_hosts or set())
+            if host.strip()
+        }
 
     def validate_fill(
         self,
@@ -192,7 +198,10 @@ class InteractionSafetyValidator:
         destination = validate_public_url(current_url)
         # Every value sourced from a medical document or supplied at this boundary
         # is treated as sensitive, including dates and organization-specific fields.
-        if not destination.uses_https and not self._allow_insecure_http:
+        insecure_allowed = self._allow_insecure_http or (
+            destination.hostname.casefold() in self._insecure_http_hosts
+        )
+        if not destination.uses_https and not insecure_allowed:
             raise InteractionSafetyError(
                 "Sensitive document information cannot be entered over HTTP."
             )
@@ -260,6 +269,7 @@ class ControlledBrowserTools:
         inspector: PageInspector | None = None,
         search_provider: SearchProvider | None = None,
         allow_insecure_http: bool = False,
+        insecure_http_hosts: set[str] | None = None,
     ) -> None:
         self._session = session
         self._field_store = field_store
@@ -267,9 +277,15 @@ class ControlledBrowserTools:
         self._inspector = inspector or PageInspector()
         self._search_provider = search_provider or DuckDuckGoSearchProvider()
         self._allow_insecure_http = allow_insecure_http
+        self._insecure_http_hosts = {
+            host.strip().rstrip(".").casefold()
+            for host in (insecure_http_hosts or set())
+            if host.strip()
+        }
         self._validator = InteractionSafetyValidator(
             field_store,
             allow_insecure_http=allow_insecure_http,
+            insecure_http_hosts=self._insecure_http_hosts,
         )
         self._trusted_domains: set[str] = set()
         self._warnings: list[str] = []
@@ -292,6 +308,10 @@ class ControlledBrowserTools:
     @property
     def warnings(self) -> list[str]:
         return list(dict.fromkeys([*self._warnings, *self._session.warnings]))
+
+    def _allows_insecure_http(self, value: str) -> bool:
+        hostname = (urlsplit(value).hostname or "").rstrip(".").casefold()
+        return self._allow_insecure_http or hostname in self._insecure_http_hosts
 
     def _trust_navigation(self) -> None:
         navigation = self._session.last_navigation
@@ -439,7 +459,9 @@ class ControlledBrowserTools:
         assert action.element_id and action.document_field_ref
         value = self._field_store.resolve(action.document_field_ref)
         destination = validate_public_url(self._session.current_url)
-        if not destination.uses_https and self._allow_insecure_http:
+        if not destination.uses_https and self._allows_insecure_http(
+            self._session.current_url
+        ):
             self._warnings.append(
                 "The report portal uses unencrypted HTTP; information sent to it "
                 "may be exposed in transit."
@@ -571,7 +593,10 @@ class ControlledBrowserTools:
         self._validator.validate_download(action, observation)
         destination = validate_public_url(self._session.current_url)
         if (
-            (not destination.uses_https and not self._allow_insecure_http)
+            (
+                not destination.uses_https
+                and not self._allows_insecure_http(self._session.current_url)
+            )
             or destination.domain not in self._trusted_domains
         ):
             raise InteractionSafetyError(
@@ -586,6 +611,7 @@ class ControlledBrowserTools:
                 allowed_domains=self._trusted_domains,
                 max_bytes=self._download_manager.max_bytes,
                 allow_insecure_http=self._allow_insecure_http,
+                insecure_http_hosts=self._insecure_http_hosts,
             )
         except ElementUnavailableError:
             original = next(
@@ -627,6 +653,7 @@ class ControlledBrowserTools:
                 allowed_domains=self._trusted_domains,
                 max_bytes=self._download_manager.max_bytes,
                 allow_insecure_http=self._allow_insecure_http,
+                insecure_http_hosts=self._insecure_http_hosts,
             )
         return self._download_manager.validate_report(staged)
 

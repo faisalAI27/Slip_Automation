@@ -74,6 +74,11 @@ class ProductionConfigurationTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertNotIn("GEMINI_API_KEY", cloud_run_environment)
+        self.assertIn(
+            'INSECURE_REPORT_PORTAL_HOSTS: "rmi.olivecliq.org"',
+            cloud_run_environment,
+        )
+        self.assertIn('ALLOW_INSECURE_REPORT_PORTALS: "false"', cloud_run_environment)
 
     def test_docker_context_excludes_environment_files(self) -> None:
         ignored = (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8")
