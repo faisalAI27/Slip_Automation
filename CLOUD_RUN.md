@@ -94,9 +94,9 @@ values. Cloud Run supplies `PORT=8080`. The complete runtime configuration is:
 | `MAX_REPORT_DOWNLOAD_MB` | `25` | Recommended bound |
 | `INTERACTION_AI_PROVIDER` | `deterministic` | Required for current engine |
 | `INTERACTION_AI_MODEL` | empty | Optional/reserved |
-| `PORTAL_URL_OVERRIDES_JSON` | RMI direct login mapping | Avoids the nondeterministic public-site popup and opens the verified report service directly |
+| `PORTAL_URL_OVERRIDES_JSON` | RMI and NWGH direct login mappings | Avoids public-site popup/redirect paths and opens each verified report service directly |
 | `PORTAL_HTTPS_HOST_REWRITES_JSON` | `{}` | Optional; only administrator-verified HTTPS rewrites |
-| `INSECURE_REPORT_PORTAL_HOSTS` | `rmi.olivecliq.org` | Exact administrator-approved legacy host; its report application is unavailable over HTTPS |
+| `INSECURE_REPORT_PORTAL_HOSTS` | `rmi.olivecliq.org,reports.nwgh.pk` | Exact administrator-approved legacy hosts whose report applications are unavailable over HTTPS |
 | `ALLOW_INSECURE_REPORT_PORTALS` | `false` | Global development override remains disabled and startup-enforced |
 | `BACKEND_EXECUTION_MODE` | `synchronous` | Required for this Cloud Run prototype |
 | `BACKEND_MAX_CONCURRENT_JOBS` | `1` | Kept safe for local job mode |

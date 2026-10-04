@@ -75,7 +75,7 @@ class ProductionConfigurationTests(unittest.TestCase):
         )
         self.assertNotIn("GEMINI_API_KEY", cloud_run_environment)
         self.assertIn(
-            'INSECURE_REPORT_PORTAL_HOSTS: "rmi.olivecliq.org"',
+            'INSECURE_REPORT_PORTAL_HOSTS: "rmi.olivecliq.org,reports.nwgh.pk"',
             cloud_run_environment,
         )
         self.assertIn('ALLOW_INSECURE_REPORT_PORTALS: "false"', cloud_run_environment)
