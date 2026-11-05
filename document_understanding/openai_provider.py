@@ -28,7 +28,11 @@ MIME_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 
 
 class OpenAIDocumentVisionProvider:
-    def __init__(self, api_key: str, model: str, timeout_seconds: float) -> None:
+    def __init__(
+        self, api_key: str, model: str, timeout_seconds: float,
+        analysis_prompt: str = DOCUMENT_ANALYSIS_PROMPT,
+    ) -> None:
+        self._analysis_prompt = analysis_prompt
         self._model = model
         self._client = OpenAI(api_key=api_key, timeout=timeout_seconds)
 
@@ -43,7 +47,7 @@ class OpenAIDocumentVisionProvider:
         try:
             response = self._client.responses.parse(
                 model=self._model,
-                instructions=DOCUMENT_ANALYSIS_PROMPT,
+                instructions=self._analysis_prompt,
                 input=[
                     {
                         "role": "user",

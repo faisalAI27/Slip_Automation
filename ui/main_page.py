@@ -16,6 +16,7 @@ from browser_agent.models import (
 )
 from config.settings import Settings
 from document_understanding.models import AnalysisStatus, DocumentUnderstandingResult
+from document_understanding.hospitals import Hospital, HOSPITAL_LABELS, HOSPITAL_HINTS
 from document_understanding.provider import (
     ProviderConfigurationError,
     ProviderResponseError,
@@ -61,6 +62,7 @@ from workflow.validation import PlanningValidationError
 logger = get_logger(__name__)
 
 DEFAULT_SESSION_VALUES = {
+    "selected_hospital": Hospital.OTHER.value,
     "uploaded_image": None,
     "uploaded_fingerprint": None,
     "temporary_image_path": None,
@@ -138,6 +140,7 @@ def _reset_run(settings: Settings) -> None:
     ]
     for key in list(DEFAULT_SESSION_VALUES) + dynamic_input_keys + [
         "photo_input_method",
+        "hospital",
         "upload_slip",
         "camera_slip",
         "show_raw_document_json",
@@ -223,7 +226,17 @@ def _accept_selected_image(selected_file: object, settings: Settings) -> None:
 
 
 def _render_upload_area(settings: Settings) -> bool:
-    st.subheader("1. Add your slip photo")
+    st.subheader("1. Choose your hospital")
+    selected_hospital = st.selectbox(
+        "Hospital",
+        options=[hospital.value for hospital in Hospital],
+        format_func=lambda value: HOSPITAL_LABELS[Hospital(value)],
+        key="hospital",
+        index=list(Hospital).index(Hospital(st.session_state.selected_hospital)),
+    )
+    st.session_state.selected_hospital = selected_hospital
+    st.caption(HOSPITAL_HINTS[Hospital(selected_hospital)])
+    st.subheader("2. Add your slip photo")
     st.caption("Keep the full slip in view and make sure the writing is clear.")
 
     input_method = st.segmented_control(
@@ -306,7 +319,8 @@ def _process_document(settings: Settings, area: object) -> None:
                 width="stretch",
             ):
                 result = service.analyze_document(
-                    Path(st.session_state.temporary_image_path)
+                    Path(st.session_state.temporary_image_path),
+                    hospital=Hospital(st.session_state.selected_hospital),
                 )
         st.session_state.document_understanding_result = result.model_dump(mode="json")
         st.session_state.document_processing_stage = "document_analysis:complete"
@@ -402,7 +416,7 @@ def _plan_workflow(settings: Settings, area: object) -> None:
                 width="stretch",
             ):
                 plan = ReportRetrievalService.from_settings(settings).plan_workflow(
-                    result
+                    result, hospital=Hospital(st.session_state.selected_hospital)
                 )
 
         st.session_state.workflow_plan = plan.model_dump(mode="json")
@@ -1089,7 +1103,12 @@ def render_app(settings: Settings) -> None:
             if st.session_state.retrieval_result:
                 _render_retrieval_input(settings)
             else:
-                render_user_input_required()
+                plan_data = st.session_state.workflow_plan or {}
+                reason = plan_data.get("user_input_requirement", {}).get("reason")
+                if reason:
+                    st.warning(reason, icon=":material/help:")
+                else:
+                    render_user_input_required()
                 result_data = st.session_state.document_understanding_result or {}
                 if result_data:
                     render_extracted_document(result_data)

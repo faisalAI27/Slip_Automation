@@ -113,6 +113,34 @@ def _stopped_retrieval_result() -> RetrievalResult:
 
 
 class UserInterfaceTests(unittest.TestCase):
+    def test_hospital_selection_survives_processing_reruns(self) -> None:
+        from document_understanding.hospitals import Hospital
+        from tests.test_hospital_profiles import document
+
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        app = AppTest.from_file(app_path)
+        app.session_state["workflow_state"] = WorkflowState.DOCUMENT_UNDERSTOOD
+        app.session_state["selected_hospital"] = "rmi"
+        app.session_state["document_understanding_result"] = document(Hospital.RMI).model_dump(mode="json")
+        with patch("ui.main_page.BrowserExecutor.from_settings") as factory:
+            factory.return_value.execute.return_value = _browser_result()
+            app.run(timeout=15)
+        app.run(timeout=15)
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state["selected_hospital"], "rmi")
+        self.assertEqual(len(app.session_state["workflow_plan"]["available_fields"]), 2)
+
+    def test_hospital_selection_shows_specific_photo_guidance(self) -> None:
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        app = AppTest.from_file(app_path).run(timeout=15)
+        selector = app.selectbox(key="hospital")
+        self.assertEqual(selector.options, ["Northwest report", "RMI report", "Other hospital"])
+        selector.set_value("northwest").run(timeout=15)
+        self.assertTrue(any("Invoice No." in item.value for item in app.caption))
+        app.selectbox(key="hospital").set_value("rmi").run(timeout=15)
+        self.assertTrue(any("Username and Password" in item.value for item in app.caption))
+        self.assertFalse(app.exception)
+
     def test_css_does_not_override_streamlit_icon_fonts(self) -> None:
         self.assertNotIn('[class*="st-"]', APP_CSS)
 

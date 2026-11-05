@@ -58,7 +58,9 @@ class GeminiDocumentVisionProvider:
         timeout_seconds: float,
         reasoning_effort: str,
         credential_focus_timeout_seconds: float = 12.0,
+        analysis_prompt: str = DOCUMENT_ANALYSIS_PROMPT,
     ) -> None:
+        self._analysis_prompt = analysis_prompt
         self._model = model
         self._credential_focus_timeout_seconds = max(
             1.0,
@@ -78,7 +80,7 @@ class GeminiDocumentVisionProvider:
 
     def analyze_document(self, image_path: Path) -> DocumentUnderstandingResult:
         image_url = self._image_data_url(image_path)
-        messages = self._messages(image_url)
+        messages = self._messages(image_url, self._analysis_prompt)
         try:
             parsed = self._parse_structured(messages)
         except (AttributeError, NotImplementedError, TypeError):
@@ -119,9 +121,11 @@ class GeminiDocumentVisionProvider:
         return f"data:{mime_type};base64,{encoded}"
 
     @staticmethod
-    def _messages(image_url: str) -> list[dict[str, Any]]:
+    def _messages(
+        image_url: str, analysis_prompt: str = DOCUMENT_ANALYSIS_PROMPT
+    ) -> list[dict[str, Any]]:
         return [
-            {"role": "system", "content": DOCUMENT_ANALYSIS_PROMPT},
+            {"role": "system", "content": analysis_prompt},
             {
                 "role": "user",
                 "content": [

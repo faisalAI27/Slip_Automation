@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/selected_slip.dart';
+import '../models/hospital.dart';
 import '../widgets/app_page.dart';
 
 class SlipSelectionScreen extends StatelessWidget {
@@ -11,6 +12,8 @@ class SlipSelectionScreen extends StatelessWidget {
     required this.onTakePhoto,
     required this.onChoosePhoto,
     required this.onGetReport,
+    required this.hospital,
+    required this.onHospitalChanged,
   });
 
   final SelectedSlip? selectedSlip;
@@ -18,6 +21,8 @@ class SlipSelectionScreen extends StatelessWidget {
   final VoidCallback onTakePhoto;
   final VoidCallback onChoosePhoto;
   final VoidCallback onGetReport;
+  final Hospital hospital;
+  final ValueChanged<Hospital> onHospitalChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -55,6 +60,29 @@ class SlipSelectionScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 28),
+          DropdownButtonFormField<Hospital>(
+            key: const Key('hospital-selector'),
+            initialValue: hospital,
+            isExpanded: true,
+            itemHeight: null,
+            isDense: false,
+            decoration: const InputDecoration(
+              labelText: 'Hospital',
+              border: OutlineInputBorder(),
+            ),
+            items: [
+              for (final option in Hospital.values)
+                DropdownMenuItem(value: option, child: Text(option.label)),
+            ],
+            onChanged: isSelecting
+                ? null
+                : (value) {
+                    if (value != null) onHospitalChanged(value);
+                  },
+          ),
+          const SizedBox(height: 12),
+          Text(hospital.photoHint, style: theme.textTheme.bodyMedium),
+          const SizedBox(height: 24),
           _SlipPreview(slip: selectedSlip),
           const SizedBox(height: 22),
           Row(
@@ -105,7 +133,7 @@ class SlipSelectionScreen extends StatelessWidget {
               const SizedBox(width: 7),
               Flexible(
                 child: Text(
-                  'Mock mode: no photo leaves your device.',
+                  'Your photo is used to retrieve your report.',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: colors.onSurfaceVariant,
                   ),
@@ -128,20 +156,14 @@ class _SlipPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final selected = slip;
-    final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
-    final extraPlaceholderHeight = ((textScale - 1).clamp(0, 1) * 64)
-        .toDouble();
-
     return Semantics(
       label: selected == null
           ? 'No slip photo selected'
           : 'Selected slip preview',
       image: selected != null,
-      child: AnimatedContainer(
-        duration: MediaQuery.disableAnimationsOf(context)
-            ? Duration.zero
-            : const Duration(milliseconds: 200),
-        height: selected == null ? 205 + extraPlaceholderHeight : 205,
+      child: Container(
+        height: selected == null ? null : 205,
+        constraints: const BoxConstraints(minHeight: 205),
         decoration: BoxDecoration(
           color: colors.surfaceContainerLow,
           borderRadius: BorderRadius.circular(20),
@@ -150,21 +172,24 @@ class _SlipPreview extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: selected == null
             ? Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.add_photo_alternate_outlined,
-                      size: 48,
-                      color: colors.primary,
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      'Your slip preview will appear here',
-                      style: Theme.of(context).textTheme.bodyMedium
-                          ?.copyWith(color: colors.onSurfaceVariant),
-                    ),
-                  ],
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.add_photo_alternate_outlined,
+                        size: 48,
+                        color: colors.primary,
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        'Your slip preview will appear here',
+                        style: Theme.of(context).textTheme.bodyMedium
+                            ?.copyWith(color: colors.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
                 ),
               )
             : Stack(

@@ -7,6 +7,7 @@ enum ReportOutcomeKind {
   additionalInformationRequired,
   reportNotFound,
   retrievalFailed,
+  accessDenied,
 }
 
 enum ReportProgressStage { readingSlip, findingService, retrievingReport }

@@ -1,0 +1,102 @@
+name: Test and build Android APK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: 'Backend URL (localhost uses adb reverse over USB)'
+        required: true
+        default: 'http://localhost:8000'
+      execution_mode:
+        description: 'Match BACKEND_EXECUTION_MODE on the server'
+        type: choice
+        options: [background, synchronous]
+        default: background
+      auth_mode:
+        description: 'Firebase for internet pilot builds; none for local USB builds'
+        type: choice
+        options: [none, firebase]
+        default: none
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest discover -s tests
+
+  apk:
+    needs: backend-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      API_BASE_URL: ${{ inputs.api_base_url || 'http://localhost:8000' }}
+      API_EXECUTION_MODE: ${{ inputs.execution_mode || 'background' }}
+      API_AUTH_MODE: ${{ inputs.auth_mode || 'none' }}
+      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+      FIREBASE_API_KEY: ${{ vars.FIREBASE_API_KEY }}
+      FIREBASE_APP_ID: ${{ vars.FIREBASE_APP_ID }}
+      FIREBASE_MESSAGING_SENDER_ID: ${{ vars.FIREBASE_MESSAGING_SENDER_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.1'
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - run: flutter analyze --no-pub
+      - run: flutter test --no-pub --reporter expanded
+      - name: Build installable arm64 test APK
+        run: |
+          if [[ "$API_AUTH_MODE" == firebase ]]; then
+            for field in FIREBASE_PROJECT_ID FIREBASE_API_KEY FIREBASE_APP_ID FIREBASE_MESSAGING_SENDER_ID; do
+              [[ -n "${!field}" ]] || { echo "Missing repository variable: $field" >&2; exit 1; }
+            done
+            [[ "$API_BASE_URL" == https://* ]] || { echo 'Firebase pilot requires HTTPS' >&2; exit 1; }
+          fi
+          flutter build apk --debug --target-platform android-arm64 \
+            --dart-define="API_BASE_URL=$API_BASE_URL" \
+            --dart-define="API_EXECUTION_MODE=$API_EXECUTION_MODE" \
+            --dart-define="API_AUTH_MODE=$API_AUTH_MODE" \
+            --dart-define="FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID" \
+            --dart-define="FIREBASE_API_KEY=$FIREBASE_API_KEY" \
+            --dart-define="FIREBASE_APP_ID=$FIREBASE_APP_ID" \
+            --dart-define="FIREBASE_MESSAGING_SENDER_ID=$FIREBASE_MESSAGING_SENDER_ID"
+      - name: Checksum
+        run: sha256sum build/app/outputs/flutter-apk/app-debug.apk > build/app/outputs/flutter-apk/SHA256SUMS
+      - uses: actions/upload-artifact@v5
+        with:
+          name: slip-automation-arm64-test-apk
+          path: |
+            mobile/build/app/outputs/flutter-apk/app-debug.apk
+            mobile/build/app/outputs/flutter-apk/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14

@@ -10,3 +10,5 @@ fastapi>=0.141,<1
 uvicorn>=0.52,<1
 python-multipart>=0.0.32,<1
 httpx>=0.28,<1
+tldextract==5.3.0
+firebase-admin>=7.7,<8

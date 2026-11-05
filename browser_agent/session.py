@@ -603,12 +603,26 @@ class BrowserSession:
         allowed_domains: set[str],
         max_bytes: int,
         allow_insecure_http: bool = False,
+        insecure_http_hosts: set[str] | None = None,
     ) -> None:
         """Capture a normal download or fetch an observed embedded report resource."""
+        allowed_http_hosts = {
+            host.strip().rstrip(".").casefold()
+            for host in (insecure_http_hosts or set())
+            if host.strip()
+        }
+
+        def permits_http(value: ValidatedURL) -> bool:
+            return (
+                value.uses_https
+                or allow_insecure_http
+                or value.hostname.casefold() in allowed_http_hosts
+            )
+
         if element_id == "printable_page_1":
             current = self._validate(self.page.url)
             if (
-                (not current.uses_https and not allow_insecure_http)
+                not permits_http(current)
                 or current.domain not in allowed_domains
             ):
                 raise InteractionSafetyError(
@@ -654,7 +668,7 @@ class BrowserSession:
             try:
                 validated = self._validate(response.url)
                 if (
-                    (not validated.uses_https and not allow_insecure_http)
+                    not permits_http(validated)
                     or validated.domain not in allowed_domains
                 ):
                     raise InteractionSafetyError(
@@ -720,7 +734,7 @@ class BrowserSession:
             )
         validated = self._validate(resource_url)
         if (
-            (not validated.uses_https and not allow_insecure_http)
+            not permits_http(validated)
             or validated.domain not in allowed_domains
         ):
             raise InteractionSafetyError(
@@ -758,7 +772,7 @@ class BrowserSession:
                     )
                 current = self._validate(next_url)
                 if (
-                    (not current.uses_https and not allow_insecure_http)
+                    not permits_http(current)
                     or current.domain not in allowed_domains
                 ):
                     raise InteractionSafetyError(
@@ -771,7 +785,7 @@ class BrowserSession:
                 )
             final = self._validate(response.url)
             if final.domain not in allowed_domains or (
-                not final.uses_https and not allow_insecure_http
+                not permits_http(final)
             ):
                 raise InteractionSafetyError(
                     "The report resource redirected outside the trusted workflow."

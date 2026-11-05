@@ -141,6 +141,41 @@ class InteractionSafetyTests(unittest.TestCase):
                 trusted_domains={"example.test"},
             )
 
+    def test_exact_legacy_http_host_allows_trusted_form(self) -> None:
+        validator = InteractionSafetyValidator(
+            _store(),
+            insecure_http_hosts={"reports.example.test"},
+        )
+        with patch(
+            "browser_agent.interaction.validate_public_url",
+            return_value=_validated("http"),
+        ):
+            validator.validate_fill(
+                _fill(),
+                _observation(),
+                current_url="http://reports.example.test/login",
+                trusted_domains={"example.test"},
+            )
+
+    def test_legacy_http_host_allowlist_does_not_cover_sibling_hosts(self) -> None:
+        validator = InteractionSafetyValidator(
+            _store(),
+            insecure_http_hosts={"other.example.test"},
+        )
+        with (
+            patch(
+                "browser_agent.interaction.validate_public_url",
+                return_value=_validated("http"),
+            ),
+            self.assertRaises(InteractionSafetyError),
+        ):
+            validator.validate_fill(
+                _fill(),
+                _observation(),
+                current_url="http://reports.example.test/login",
+                trusted_domains={"example.test"},
+            )
+
     def test_unknown_cross_domain_form_destination_is_blocked(self) -> None:
         validator = InteractionSafetyValidator(_store())
         with (

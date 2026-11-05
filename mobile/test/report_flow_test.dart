@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:reportapp/app.dart';
 import 'package:reportapp/models/report_result.dart';
 import 'package:reportapp/models/selected_slip.dart';
+import 'package:reportapp/models/hospital.dart';
 import 'package:reportapp/services/image_selection_service.dart';
 import 'package:reportapp/services/report_service.dart';
 
@@ -26,6 +27,53 @@ const _bundle = ReportFile(
 );
 
 void main() {
+  testWidgets('hospital choices fit a small phone at largest text size', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(375, 812);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 3.2;
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await tester.pumpWidget(_testApp(_completed([_reportOne])));
+    final selector = find.byKey(const Key('hospital-selector'));
+    await tester.ensureVisible(selector);
+    await tester.tap(selector);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('RMI report').last);
+    await tester.pumpAndSettle();
+    expect(find.text(Hospital.rmi.photoHint), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('selected hospital reaches retrieval and resets for a new slip', (
+    tester,
+  ) async {
+    final service = _ImmediateReportService(_completed([_reportOne]));
+    await tester.pumpWidget(_testAppWithService(service));
+    await tester.tap(find.byKey(const Key('hospital-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Northwest report').last);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Include the Invoice No. and Access Code in your photo.'),
+      findsOneWidget,
+    );
+    await _completeFlow(tester);
+    expect(service.receivedSlip?.hospital, Hospital.northwest);
+    final startAgain = find.byKey(const Key('start-again-button'));
+    await tester.ensureVisible(startAgain);
+    await tester.tap(startAgain);
+    await tester.pumpAndSettle();
+    expect(find.text(Hospital.other.photoHint), findsOneWidget);
+  });
+
   testWidgets('shows the initial camera and gallery state', (tester) async {
     await tester.pumpWidget(_testApp(_completed([_reportOne])));
 
@@ -45,8 +93,7 @@ void main() {
   testWidgets('enables retrieval after a photo is selected', (tester) async {
     await tester.pumpWidget(_testApp(_completed([_reportOne])));
 
-    await tester.tap(find.byKey(const Key('choose-photo-button')));
-    await tester.pumpAndSettle();
+    await _selectPhoto(tester);
 
     expect(find.text('Photo selected'), findsOneWidget);
     final getReport = tester.widget<FilledButton>(
@@ -66,6 +113,7 @@ void main() {
       ),
     );
 
+    await tester.ensureVisible(find.byKey(const Key('take-photo-button')));
     await tester.tap(find.byKey(const Key('take-photo-button')));
     await tester.pumpAndSettle();
     expect(selectionService.lastSource, SlipImageSource.camera);
@@ -273,12 +321,14 @@ class _ImmediateReportService implements ReportService {
   _ImmediateReportService(this.outcome);
 
   final ReportOutcome outcome;
+  SelectedSlip? receivedSlip;
 
   @override
   Future<ReportOutcome> retrieve(
     SelectedSlip slip, {
     required ReportProgressCallback onProgress,
   }) async {
+    receivedSlip = slip;
     onProgress(ReportProgressStage.readingSlip);
     onProgress(ReportProgressStage.findingService);
     onProgress(ReportProgressStage.retrievingReport);

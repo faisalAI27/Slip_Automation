@@ -1,0 +1,16 @@
+# BuildKit is required by the Dockerfile's wheel-cache mount.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    env: [DOCKER_BUILDKIT=1]
+    args:
+      - build
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/slip-api:${_TAG}
+      - .
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/slip-api:${_TAG}
+substitutions:
+  _REGION: asia-south1
+  _REPOSITORY: slip-automation
+  _TAG: pilot
+timeout: 1800s
