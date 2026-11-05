@@ -105,7 +105,8 @@ are in `CLOUD_RUN_PILOT.md`, with an authentication guard before public deployme
 This preparation passes **248 Python tests**, **50 Flutter tests**, and Flutter
 analysis. A clean temporary Python environment installs all 59 pinned backend
 packages with no dependency conflicts and imports FastAPI/Firebase successfully.
-Local browser/container launch and live Firebase sign-in have not been verified
-against a cloud project; the user has not created that project yet. Deployment,
-live token verification, sandboxed Chromium, and physical-phone retrieval remain
-the next staging checks.
+The pilot target is now `slip-automation-pilot` in `asia-south1`. The downloaded
+Android Firebase configuration was verified against `com.slipautomation.reportapp`.
+The approved tester UID is held only in the ignored local deployment file.
+Deployment, live token verification, sandboxed Chromium, and physical-phone
+retrieval remain the next staging checks.

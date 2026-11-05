@@ -9,6 +9,23 @@ UIDs. Every job/result/download is checked against its authenticated owner.
 This follows Google's [Cloud Run end-user authentication](https://docs.cloud.google.com/run/docs/authenticating/end-users)
 pattern. It differs from the IAM-private development setup in [CLOUD_RUN.md](../CLOUD_RUN.md).
 
+## Configured pilot target
+
+| Setting | Value |
+|---|---|
+| Firebase / Google Cloud project | `slip-automation-pilot` |
+| Cloud Run region | `asia-south1` (Mumbai) |
+| Cloud Run service | `slip-api` |
+| Android package | `com.slipautomation.reportapp` |
+| API mode | `synchronous` |
+| API authentication | Firebase Email/Password plus approved tester UIDs |
+
+[`cloud-run.pilot.env.yaml`](../cloud-run.pilot.env.yaml) contains the project-specific
+non-secret template. Its tester allowlist is intentionally empty. The ignored local
+`.env.cloud-run.yaml` holds the approved tester UID; keep that file out of Git.
+Firebase Android client identifiers are supplied through the four Actions variables
+described below. The backend URL can only be set after Cloud Run deployment.
+
 ## 1. Create the project and testers
 
 1. Open the [Firebase console](https://console.firebase.google.com/) and create a
@@ -34,7 +51,7 @@ Git, and Docker, so no local Docker or Google Cloud CLI installation is needed.
 git clone --branch codex/mobile-api-apk https://github.com/faisalAI27/Slip_Automation.git
 cd Slip_Automation
 
-PROJECT_ID="your-firebase-project-id"
+PROJECT_ID="slip-automation-pilot"
 REGION="asia-south1"
 TAG="$(git rev-parse --short HEAD)"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/slip-automation/slip-api:${TAG}"
@@ -89,15 +106,16 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
 gcloud builds submit --project "$PROJECT_ID" --config cloudbuild.yaml \
   --substitutions="_REGION=${REGION},_TAG=${TAG}" .
 
-cp cloud-run.env.yaml .env.cloud-run.yaml
+cp cloud-run.pilot.env.yaml .env.cloud-run.yaml
 ```
 
-Append these lines to `.env.cloud-run.yaml`, replacing both placeholders. Use
-double-quoted values; multiple tester UIDs are separated by commas:
+Set `PILOT_ALLOWED_UIDS` in the ignored `.env.cloud-run.yaml` to the tester UID
+from Firebase Authentication. The project and auth mode are already configured.
+Use double-quoted values; multiple tester UIDs are separated by commas:
 
 ```yaml
 API_AUTH_MODE: "firebase"
-FIREBASE_PROJECT_ID: "your-firebase-project-id"
+FIREBASE_PROJECT_ID: "slip-automation-pilot"
 PILOT_ALLOWED_UIDS: "REPLACE_WITH_TESTER_UID"
 ```
 
