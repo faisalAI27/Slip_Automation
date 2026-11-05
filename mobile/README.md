@@ -20,7 +20,8 @@ release. A phone with a 32-bit-only CPU needs a separate build.
 For an existing HTTPS backend, manually run the workflow with its
 `api_base_url` and matching `execution_mode` (`background` or `synchronous`).
 The workflow must be present on the default branch before GitHub offers its
-manual Run workflow button. Branch pushes also run the default USB build.
+manual Run workflow button. Pushes to `main` or `codex/mobile-api-apk` and pull
+requests to `main` also run the default USB build.
 
 ## Test on a phone through USB
 
@@ -108,3 +109,20 @@ Demo mode generates test files and never retrieves a patient report. Available
 scenarios are `single`, `multiple`, `badImage`, `networkUnavailable`,
 `backendUnavailable`, `verificationRequired`, `additionalInformationRequired`,
 `reportNotFound`, and `retrievalFailed`.
+
+## Hospital selection
+
+Before taking or choosing a photo, select **Northwest report**, **RMI report**,
+or **Other hospital**. Northwest focuses on **Invoice No. + Access Code**; RMI
+focuses on **Username / User ID + Password**. Other hospital uses the existing
+general document and portal-discovery flow.
+
+The app sends `hospital=northwest|rmi|other` alongside the image in both background
+and synchronous API modes. Install/build this client with the updated backend;
+an older backend may silently ignore that form field. The existing APK files
+are previous builds and do not acquire source changes automatically.
+
+Keep the full slip and required fields visible. If the selected hospital does not
+match the slip, or the access details cannot be read reliably, check the selection
+and take another photo. Hospital selection does not bypass portal verification or
+transport checks. See the root README for current portal limitations.

@@ -2,7 +2,9 @@ name: Test and build Android APK
 
 on:
   push:
-    branches: [codex/mobile-api-apk]
+    branches: [main, codex/mobile-api-apk]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       api_base_url:
@@ -17,6 +19,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend-tests:
