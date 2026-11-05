@@ -4,7 +4,16 @@ import secrets
 from functools import partial
 
 import anyio
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse
 
 from backend.dependencies import (
@@ -13,6 +22,7 @@ from backend.dependencies import (
     get_result_store,
 )
 from backend.jobs import JobRecord, JobStore
+from backend.auth import authorized_uid, require_owner
 from backend.outcomes import public_files, store_outcome
 from backend.schemas import JobStatus, RetrievalResultResponse
 from backend.uploads import save_slip_upload
@@ -32,6 +42,7 @@ async def retrieve_report(
     request: Request,
     slip: UploadFile = File(...),
     hospital: Hospital = Form(Hospital.OTHER),
+    uid: str | None = Depends(authorized_uid),
     settings: Settings = Depends(get_backend_settings),
     store: JobStore = Depends(get_result_store),
     service: ReportRetrievalService = Depends(get_report_retrieval_service),
@@ -50,13 +61,15 @@ async def retrieve_report(
     upload_path = await save_slip_upload(slip, settings)
     result_id = secrets.token_urlsafe(18)
     try:
-        store.create(result_id, upload_path)
+        store.create(result_id, upload_path, owner_uid=uid)
         outcome = await anyio.to_thread.run_sync(
             partial(service.retrieve, upload_path, hospital=hospital)
         )
         store_outcome(result_id, outcome, store)
     except Exception as exc:
-        logger.error("Synchronous retrieval failed unexpectedly: %s", type(exc).__name__)
+        logger.error(
+            "Synchronous retrieval failed unexpectedly: %s", type(exc).__name__
+        )
         record = store.get(result_id)
         if record is None:
             remove_files([upload_path], settings.temp_dir)
@@ -86,11 +99,10 @@ async def retrieve_report(
 @router.get("/results/{result_id}", response_model=RetrievalResultResponse)
 def get_result(
     result_id: str,
+    uid: str | None = Depends(authorized_uid),
     store: JobStore = Depends(get_result_store),
 ) -> RetrievalResultResponse:
-    record = store.get(result_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Result not found.")
+    record = require_owner(store.get(result_id), uid)
     return _result_response(record)
 
 
@@ -98,8 +110,10 @@ def get_result(
 def download_result_file(
     result_id: str,
     file_id: str,
+    uid: str | None = Depends(authorized_uid),
     store: JobStore = Depends(get_result_store),
 ) -> FileResponse:
+    require_owner(store.get(result_id), uid)
     result_file = store.get_file(result_id, file_id)
     if result_file is None:
         raise HTTPException(status_code=404, detail="File not found.")
@@ -114,8 +128,10 @@ def download_result_file(
 @router.delete("/results/{result_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_result(
     result_id: str,
+    uid: str | None = Depends(authorized_uid),
     store: JobStore = Depends(get_result_store),
 ) -> None:
+    require_owner(store.get(result_id), uid)
     if not store.delete(result_id):
         raise HTTPException(status_code=404, detail="Result not found.")
 

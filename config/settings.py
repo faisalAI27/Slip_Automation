@@ -98,12 +98,17 @@ class Settings:
     job_ttl_minutes: int
     api_allowed_origins: tuple[str, ...]
     log_level: str
+    api_auth_mode: str = "none"
+    firebase_project_id: str = ""
+    pilot_allowed_uids: tuple[str, ...] = ()
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     raw_temp_dir = Path(os.getenv("TEMP_DIR", "temp"))
-    temp_dir = raw_temp_dir if raw_temp_dir.is_absolute() else PROJECT_ROOT / raw_temp_dir
+    temp_dir = (
+        raw_temp_dir if raw_temp_dir.is_absolute() else PROJECT_ROOT / raw_temp_dir
+    )
     document_api_key = (os.getenv("DOCUMENT_AI_API_KEY") or "").strip() or None
     gemini_api_key = (os.getenv("GEMINI_API_KEY") or "").strip() or None
 
@@ -132,12 +137,10 @@ def get_settings() -> Settings:
             1.0,
             float(os.getenv("GEMINI_CREDENTIAL_FOCUS_TIMEOUT_SECONDS", "12")),
         ),
-        gemini_reasoning_effort=os.getenv(
-            "GEMINI_REASONING_EFFORT", "low"
-        ).strip().lower(),
-        ollama_base_url=os.getenv(
-            "OLLAMA_BASE_URL", "http://127.0.0.1:11434"
-        ).strip(),
+        gemini_reasoning_effort=os.getenv("GEMINI_REASONING_EFFORT", "low")
+        .strip()
+        .lower(),
+        ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip(),
         ollama_timeout_seconds=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "420")),
         browser_headless=_as_bool(os.getenv("BROWSER_HEADLESS"), default=True),
         browser_timeout_seconds=max(
@@ -150,25 +153,19 @@ def get_settings() -> Settings:
             1, min(10, int(os.getenv("BROWSER_MAX_SEARCH_RESULTS", "8")))
         ),
         agent_max_steps=max(1, int(os.getenv("AGENT_MAX_STEPS", "40"))),
-        agent_max_navigations=max(
-            1, int(os.getenv("AGENT_MAX_NAVIGATIONS", "24"))
-        ),
+        agent_max_navigations=max(1, int(os.getenv("AGENT_MAX_NAVIGATIONS", "24"))),
         agent_max_form_submissions=max(
             1, int(os.getenv("AGENT_MAX_FORM_SUBMISSIONS", "2"))
         ),
         agent_max_wait_seconds=max(
             0.0, min(30.0, float(os.getenv("AGENT_MAX_WAIT_SECONDS", "8")))
         ),
-        max_report_download_mb=max(
-            1, int(os.getenv("MAX_REPORT_DOWNLOAD_MB", "25"))
-        ),
+        max_report_download_mb=max(1, int(os.getenv("MAX_REPORT_DOWNLOAD_MB", "25"))),
         interaction_ai_provider=os.getenv(
             "INTERACTION_AI_PROVIDER", "deterministic"
         ).strip(),
         interaction_ai_model=os.getenv("INTERACTION_AI_MODEL", "").strip(),
-        portal_url_overrides=_as_url_overrides(
-            os.getenv("PORTAL_URL_OVERRIDES_JSON")
-        ),
+        portal_url_overrides=_as_url_overrides(os.getenv("PORTAL_URL_OVERRIDES_JSON")),
         portal_https_host_rewrites=_as_url_overrides(
             os.getenv("PORTAL_HTTPS_HOST_REWRITES_JSON")
         ),
@@ -178,13 +175,22 @@ def get_settings() -> Settings:
         insecure_report_portal_hosts=_as_hosts(
             os.getenv("INSECURE_REPORT_PORTAL_HOSTS")
         ),
-        backend_execution_mode=os.getenv(
-            "BACKEND_EXECUTION_MODE", "background"
-        ).strip().casefold(),
+        backend_execution_mode=os.getenv("BACKEND_EXECUTION_MODE", "background")
+        .strip()
+        .casefold(),
         backend_max_concurrent_jobs=max(
             1, int(os.getenv("BACKEND_MAX_CONCURRENT_JOBS", "1"))
         ),
         job_ttl_minutes=max(1, int(os.getenv("JOB_TTL_MINUTES", "30"))),
         api_allowed_origins=_as_origins(os.getenv("API_ALLOWED_ORIGINS")),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        api_auth_mode=os.getenv("API_AUTH_MODE", "none").strip().lower(),
+        firebase_project_id=os.getenv("FIREBASE_PROJECT_ID", "").strip(),
+        pilot_allowed_uids=tuple(
+            dict.fromkeys(
+                value.strip()
+                for value in os.getenv("PILOT_ALLOWED_UIDS", "").split(",")
+                if value.strip()
+            )
+        ),
     )

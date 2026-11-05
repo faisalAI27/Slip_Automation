@@ -16,6 +16,11 @@ on:
         type: choice
         options: [background, synchronous]
         default: background
+      auth_mode:
+        description: 'Firebase for internet pilot builds; none for local USB builds'
+        type: choice
+        options: [none, firebase]
+        default: none
 
 permissions:
   contents: read
@@ -47,6 +52,11 @@ jobs:
     env:
       API_BASE_URL: ${{ inputs.api_base_url || 'http://localhost:8000' }}
       API_EXECUTION_MODE: ${{ inputs.execution_mode || 'background' }}
+      API_AUTH_MODE: ${{ inputs.auth_mode || 'none' }}
+      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+      FIREBASE_API_KEY: ${{ vars.FIREBASE_API_KEY }}
+      FIREBASE_APP_ID: ${{ vars.FIREBASE_APP_ID }}
+      FIREBASE_MESSAGING_SENDER_ID: ${{ vars.FIREBASE_MESSAGING_SENDER_ID }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -65,10 +75,21 @@ jobs:
       - run: flutter analyze --no-pub
       - run: flutter test --no-pub --reporter expanded
       - name: Build installable arm64 test APK
-        run: >-
-          flutter build apk --debug --target-platform android-arm64
-          --dart-define="API_BASE_URL=$API_BASE_URL"
-          --dart-define="API_EXECUTION_MODE=$API_EXECUTION_MODE"
+        run: |
+          if [[ "$API_AUTH_MODE" == firebase ]]; then
+            for field in FIREBASE_PROJECT_ID FIREBASE_API_KEY FIREBASE_APP_ID FIREBASE_MESSAGING_SENDER_ID; do
+              [[ -n "${!field}" ]] || { echo "Missing repository variable: $field" >&2; exit 1; }
+            done
+            [[ "$API_BASE_URL" == https://* ]] || { echo 'Firebase pilot requires HTTPS' >&2; exit 1; }
+          fi
+          flutter build apk --debug --target-platform android-arm64 \
+            --dart-define="API_BASE_URL=$API_BASE_URL" \
+            --dart-define="API_EXECUTION_MODE=$API_EXECUTION_MODE" \
+            --dart-define="API_AUTH_MODE=$API_AUTH_MODE" \
+            --dart-define="FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID" \
+            --dart-define="FIREBASE_API_KEY=$FIREBASE_API_KEY" \
+            --dart-define="FIREBASE_APP_ID=$FIREBASE_APP_ID" \
+            --dart-define="FIREBASE_MESSAGING_SENDER_ID=$FIREBASE_MESSAGING_SENDER_ID"
       - name: Checksum
         run: sha256sum build/app/outputs/flutter-apk/app-debug.apk > build/app/outputs/flutter-apk/SHA256SUMS
       - uses: actions/upload-artifact@v5

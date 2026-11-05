@@ -44,12 +44,15 @@ class JobRecord:
     report_file_ids: list[str] = field(default_factory=list)
     bundle_file_id: str | None = None
     safe_failure_type: str | None = None
+    owner_uid: str | None = None
 
 
 class JobStore(Protocol):
     """Replaceable store contract for a future durable deployment backend."""
 
-    def create(self, job_id: str, upload_path: Path) -> JobRecord: ...
+    def create(
+        self, job_id: str, upload_path: Path, *, owner_uid: str | None = None
+    ) -> JobRecord: ...
 
     def get(self, job_id: str) -> JobRecord | None: ...
 
@@ -99,7 +102,9 @@ class LocalJobStore:
         self._jobs: dict[str, JobRecord] = {}
         self._lock = RLock()
 
-    def create(self, job_id: str, upload_path: Path) -> JobRecord:
+    def create(
+        self, job_id: str, upload_path: Path, *, owner_uid: str | None = None
+    ) -> JobRecord:
         now = self._clock()
         record = JobRecord(
             job_id=job_id,
@@ -109,6 +114,7 @@ class LocalJobStore:
             created_at=now,
             expires_at=now + self._ttl,
             upload_path=upload_path.resolve(),
+            owner_uid=owner_uid,
         )
         with self._lock:
             self._cleanup_expired_locked(now)

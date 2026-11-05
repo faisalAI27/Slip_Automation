@@ -68,6 +68,11 @@ and ambiguous report choices stop automation. Files pass signature, size, type,
 and owned-path validation before delivery.
 
 Gemini/OpenAI modes send the image to the configured provider. Ollama inference
-stays local. Production disables debug mode and rejects legacy HTTP opt-ins.
-Application routes have no user-account ownership layer; production ingress
-and mobile authentication must be designed together.
+stays local. Production disables debug mode and rejects the broad HTTP override;
+administrator-managed exact-host HTTP exceptions remain permitted.
+
+The independent-phone pilot uses Firebase Email/Password sign-in. Every API call
+verifies its ID token (including revocation) and checks an explicit tester UID
+allowlist. Job/result/file routes also check the authenticated owner. See the
+[pilot deployment guide](CLOUD_RUN_PILOT.md). Local or IAM-private deployments
+can retain `API_AUTH_MODE=none`; do not use that mode with public ingress.

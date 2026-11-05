@@ -102,6 +102,7 @@ docs/                     Architecture, technical guide, and project review
 - [Android setup and APK builds](mobile/README.md)
 - [Persistent-host deployment](DEPLOYMENT.md)
 - [Cloud Run deployment](CLOUD_RUN.md)
+- [Independent phone pilot: Firebase sign-in and Cloud Run](docs/CLOUD_RUN_PILOT.md)
 - [Project review and known limitations](docs/PROJECT_REVIEW.md)
 - [Contributing and checks](CONTRIBUTING.md)
 
@@ -114,12 +115,12 @@ APK on the development branch, pull requests to `main`, and pushes to `main`.
 
 The backend uses temporary files and process-local state. It supports one
 instance and one worker; durable storage and a shared queue/store are needed
-before scaling. Cloud Run's authenticated ingress also requires a mobile
-authentication integration.
+before scaling. The independent-phone pilot uses Firebase sign-in, an approved
+tester allowlist, and per-user result ownership; follow the pilot guide above.
 
 The hospitals' published report URLs currently have certificate or redirect
-problems. Existing administrator-configured legacy HTTP portals require an
-explicit development-only opt-in; production rejects that setting. See the
+problems. Existing administrator-configured exact-host HTTP exceptions remain
+permitted in production; the broad development override is rejected. See the
 [dated portal findings](docs/TECHNICAL_GUIDE.md#choose-a-hospital-before-scanning).
 Hospital selection does not guarantee successful retrieval from a live portal.
 

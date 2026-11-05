@@ -8,6 +8,7 @@
 | [Android client](../mobile/README.md) | Phone testing, API modes, APK builds, storage |
 | [Persistent-host deployment](../DEPLOYMENT.md) | Docker, sandboxing, single-instance deployment |
 | [Cloud Run deployment](../CLOUD_RUN.md) | Request-bound retrieval and ephemeral storage |
+| [Independent phone pilot](CLOUD_RUN_PILOT.md) | Firebase tester sign-in, setup, Cloud Build, deployment, and APK configuration |
 | [Project review](PROJECT_REVIEW.md) | Git comparison, validation, deployment limits |
 | [Contributing](../CONTRIBUTING.md) | Development workflow and checks |
 

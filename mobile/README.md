@@ -4,6 +4,11 @@ The default app now uploads a slip to FastAPI, retrieves the result, downloads
 validated report files into private app storage, and opens/saves those files.
 Gemini credentials and Playwright stay on the Python server, never in the APK.
 
+For independent phone access with tester sign-in, follow the
+[Firebase and Cloud Run pilot guide](../docs/CLOUD_RUN_PILOT.md).
+It uses `API_AUTH_MODE=firebase` and sends a fresh Firebase ID token on each
+request. Only backend-approved tester UIDs can retrieve their own results.
+
 ## Low-storage APK build
 
 The GitHub Actions workflow `.github/workflows/android-apk.yml` runs Python tests,
@@ -63,7 +68,8 @@ saved reports can contain medical information.
   current Cloud Run configuration. The upload request allows 16 minutes.
 - The server address is a compile-time `API_BASE_URL`. No secret belongs in a
   `--dart-define`. An IAM-private Cloud Run deployment additionally needs an
-  authentication integration; this client does not mint Cloud Run ID tokens.
+  separate IAM authentication integration. The Firebase pilot instead uses
+  application-verified Firebase tokens and public Cloud Run ingress.
 - Downloads are bounded by size, checked for supported signatures, and cached
   before the success screen appears. Failed runs clear partial local downloads.
   View opens the cached file; Download saves it in private app documents.

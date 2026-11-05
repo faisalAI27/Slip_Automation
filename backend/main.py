@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.dependencies import get_job_runner, get_job_store, get_result_store
+from backend.auth import validate_auth_settings
 from backend.jobs import JobRunner, JobStore
 from backend.routes.reports import router as reports_router
 from backend.routes.synchronous import router as synchronous_router
@@ -21,6 +22,7 @@ logger = get_logger(__name__)
 
 def validate_production_settings(settings: Settings) -> None:
     """Fail startup rather than silently weaken a production deployment."""
+    validate_auth_settings(settings)
     if settings.backend_execution_mode not in {"background", "synchronous"}:
         raise RuntimeError(
             "BACKEND_EXECUTION_MODE must be 'background' or 'synchronous'."
@@ -121,7 +123,7 @@ def create_app() -> FastAPI:
             allow_origins=list(settings.api_allowed_origins),
             allow_credentials=True,
             allow_methods=["GET", "POST", "DELETE"],
-            allow_headers=["Content-Type"],
+            allow_headers=["Content-Type", "Authorization"],
         )
 
     @api.get("/health", response_model=HealthResponse, tags=["health"])

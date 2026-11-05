@@ -1,5 +1,9 @@
 # Google Cloud Run pre-deployment guide
 
+For the independent-phone pilot with approved tester sign-in, use
+[the Firebase pilot deployment guide](docs/CLOUD_RUN_PILOT.md). This document
+describes the original IAM-private service configuration.
+
 This guide prepares the FastAPI container only. It does not start Streamlit and
 does not deploy any resource.
 

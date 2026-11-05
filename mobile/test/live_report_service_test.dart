@@ -240,7 +240,7 @@ void main() {
     });
   }
 
-  for (final status in [400, 413, 415, 422, 503, 401, 302]) {
+  for (final status in [400, 413, 415, 422, 503, 401, 403, 302]) {
     test(
       'handles HTTP $status without upload retry or error disclosure',
       () async {
@@ -252,6 +252,8 @@ void main() {
           outcome.kind,
           [400, 413, 415, 422].contains(status)
               ? ReportOutcomeKind.badImage
+              : [401, 403].contains(status)
+              ? ReportOutcomeKind.accessDenied
               : ReportOutcomeKind.backendUnavailable,
         );
         expect(requests.length, 1);

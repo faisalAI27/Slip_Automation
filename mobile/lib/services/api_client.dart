@@ -14,12 +14,13 @@ class ApiException implements Exception {
 
 /// Sends only to the configured backend; redirects never forward slip data.
 class ApiClient {
-  ApiClient({required AppConfig config, http.Client? client})
+  ApiClient({required AppConfig config, http.Client? client, this.accessToken})
     : baseUri = config.apiBaseUri,
       _client = client ?? http.Client();
 
   final Uri baseUri;
   final http.Client _client;
+  final Future<String?> Function()? accessToken;
 
   Future<Uint8List> _send(
     http.BaseRequest Function(Future<void> abortTrigger) buildRequest, {
@@ -31,6 +32,14 @@ class ApiClient {
     StreamIterator<List<int>>? body;
     request.followRedirects = false;
     final operation = (() async {
+      if (accessToken != null) {
+        final token = await accessToken!();
+        if (token == null || token.isEmpty) throw const ApiException(401);
+        if (abort.isCompleted) {
+          throw TimeoutException('Request deadline exceeded.');
+        }
+        request.headers['Authorization'] = 'Bearer $token';
+      }
       final response = await _client.send(request);
       if (abort.isCompleted) {
         await response.stream.listen((_) {}).cancel();

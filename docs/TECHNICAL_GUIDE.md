@@ -44,8 +44,8 @@ confirms that the username and password are printed on the cash receipt.
 links to `reports.nwgh.pk`, whose HTTPS certificate failed hostname validation
 during this check. RMI's published `labreports.rmi.edu.pk` link redirected to its
 homepage. The existing deployment configuration maps these hospitals to legacy
-HTTP services. Those require the existing explicit development-only HTTP opt-in
-and exact-host allowlist; production settings reject that opt-in. Successful
+HTTP services. The exact-host allowlist permits these exceptions in production.
+Only the broad `ALLOW_INSECURE_REPORT_PORTALS` override is development-only. Successful
 real-patient retrieval still requires testing against the deployed hospital
 service with authorized slips.
 

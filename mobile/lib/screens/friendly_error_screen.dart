@@ -76,6 +76,11 @@ class _ErrorContent {
 
   factory _ErrorContent.forKind(ReportOutcomeKind kind) {
     return switch (kind) {
+      ReportOutcomeKind.accessDenied => const _ErrorContent(
+        'Pilot access required',
+        'Sign out and sign in with an approved tester account. Contact your pilot administrator if access is still denied.',
+        Icons.lock_outline,
+      ),
       ReportOutcomeKind.badImage => const _ErrorContent(
         'We couldn’t read that photo',
         'Take another photo in good light and keep the entire slip in frame.',

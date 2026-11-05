@@ -122,6 +122,7 @@ class LiveReportService implements ReportService {
     } on ApiException catch (error) {
       return ReportOutcome(
         kind: switch (error.statusCode) {
+          401 || 403 => ReportOutcomeKind.accessDenied,
           400 || 413 || 415 || 422 => ReportOutcomeKind.badImage,
           404 || 410 => ReportOutcomeKind.reportNotFound,
           _ => ReportOutcomeKind.backendUnavailable,

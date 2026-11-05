@@ -52,8 +52,8 @@ shared across clients; the new options do not create three separate engines.
 - **Branch integration:** the Android/backend, hospital-selection, and legacy-portal
   work is tracked on the mobile branch and its pull request. CI runs on pushes to
   that branch, pull requests to main, pushes to main, and manual dispatch.
-- **Portal transport:** current hospital HTTP overrides are explicitly for
-  development. Production startup rejects `ALLOW_INSECURE_REPORT_PORTALS=true`.
+- **Portal transport:** production permits the exact-host legacy HTTP allowlist.
+  Production startup rejects the broader `ALLOW_INSECURE_REPORT_PORTALS=true`.
   Northwest's published HTTPS report host failed certificate validation during
   the public-page check; RMI's published report link redirected to its homepage.
   Public legacy forms were inspected without submitting credentials. This review
@@ -61,10 +61,10 @@ shared across clients; the new options do not create three separate engines.
 - **Temporary infrastructure:** jobs and files live in one process/local storage.
   They can disappear on restart or Cloud Run instance replacement. Existing docs
   correctly require external storage and a shared queue/store before scaling.
-- **Access boundary:** application routes rely on opaque identifiers, not user
-  accounts or per-patient ownership checks. Cloud Run documentation specifies
-  authenticated ingress, while the current mobile API client has no identity-token
-  integration. A production multi-user service needs those boundaries aligned.
+- **Access boundary:** the later independent-phone pilot adds Firebase sign-in,
+  token verification, tester allowlisting, and per-user result ownership. Its
+  application-authenticated public ingress is documented in `CLOUD_RUN_PILOT.md`.
+  The original IAM-private deployment remains a separate configuration.
 - **Client copy:** the selection screen previously said no photo leaves the phone
   even when a live backend was configured. It now uses wording consistent with
   report retrieval. Cloud vision providers still receive the image when selected.
@@ -93,3 +93,19 @@ HTTP request and cancel active response subscriptions, including late responses;
 the HTTP client remains usable for retries. `--gemini` rejects other providers.
 GitHub Actions records the checks and debug APK build for the pushed commit.
 No local APK rebuild or backend deployment was performed.
+
+## Independent-phone pilot preparation
+
+The follow-up adds Firebase Email/Password sign-in, approved tester UIDs,
+revocation checks, and owner checks for every job/result/file. The Cloud Run
+pilot uses public HTTPS ingress with application-level authentication; the
+original IAM-private setup remains available separately. Deployment commands
+are in `CLOUD_RUN_PILOT.md`, with an authentication guard before public deployment.
+
+This preparation passes **248 Python tests**, **50 Flutter tests**, and Flutter
+analysis. A clean temporary Python environment installs all 59 pinned backend
+packages with no dependency conflicts and imports FastAPI/Firebase successfully.
+Local browser/container launch and live Firebase sign-in have not been verified
+against a cloud project; the user has not created that project yet. Deployment,
+live token verification, sandboxed Chromium, and physical-phone retrieval remain
+the next staging checks.

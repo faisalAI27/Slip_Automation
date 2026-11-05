@@ -25,3 +25,7 @@ temp/*
 !temp/.gitkeep
 .agents/
 .claude/
+
+# Local Firebase app configuration and generated build defines
+**/google-services.json
+firebase-defines*.json
