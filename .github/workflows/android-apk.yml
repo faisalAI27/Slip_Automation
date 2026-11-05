@@ -2,7 +2,7 @@ name: Test and build Android APK
 
 on:
   push:
-    branches: [main, codex/mobile-api-apk]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:

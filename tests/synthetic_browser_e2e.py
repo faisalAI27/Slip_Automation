@@ -101,8 +101,6 @@ def run(use_gemini: bool):
         image.save(path)
         session = SyntheticPortal()
         agent = RetrievalAgent(lambda store: ControlledBrowserTools(session, store, ReportDownloadManager(Path(folder))))
-        if use_gemini and settings.document_ai_provider.strip().lower() != "gemini":
-            raise ValueError("--gemini requires DOCUMENT_AI_PROVIDER=gemini.")
         provider = create_document_provider(settings) if use_gemini else SyntheticProvider()
         service = ReportRetrievalService(settings, document_service=DocumentUnderstandingService(provider), retrieval_agent=agent)
         outcome = service.retrieve(path)

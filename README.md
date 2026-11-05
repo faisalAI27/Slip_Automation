@@ -109,7 +109,7 @@ docs/                     Architecture, technical guide, and project review
 Run `python -m unittest discover -s tests -v` from the root. In `mobile/`, run
 `flutter pub get --enforce-lockfile`, `flutter analyze --no-pub`, and
 `flutter test --no-pub`. GitHub Actions runs checks and builds an arm64 debug
-APK on the development branch, pull requests to `main`, and pushes to `main`.
+APK on pull requests to `main`, pushes to `main`, and manual dispatch.
 
 ## Current limitations
 

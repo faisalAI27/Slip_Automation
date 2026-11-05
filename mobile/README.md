@@ -25,7 +25,7 @@ release. A phone with a 32-bit-only CPU needs a separate build.
 For an existing HTTPS backend, manually run the workflow with its
 `api_base_url` and matching `execution_mode` (`background` or `synchronous`).
 The workflow must be present on the default branch before GitHub offers its
-manual Run workflow button. Pushes to `main` or `codex/mobile-api-apk` and pull
+manual Run workflow button. Pushes to `main` and pull
 requests to `main` also run the default USB build.
 
 ## Test on a phone through USB

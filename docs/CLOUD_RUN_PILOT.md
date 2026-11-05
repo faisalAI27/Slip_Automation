@@ -48,7 +48,7 @@ Open [Cloud Shell](https://shell.cloud.google.com/). It already provides `gcloud
 Git, and Docker, so no local Docker or Google Cloud CLI installation is needed.
 
 ```bash
-git clone --branch codex/mobile-api-apk https://github.com/faisalAI27/Slip_Automation.git
+git clone --branch main https://github.com/faisalAI27/Slip_Automation.git
 cd Slip_Automation
 
 PROJECT_ID="slip-automation-pilot"
@@ -158,12 +158,10 @@ For a cloud-built APK, add repository **Actions variables**
 `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY`, `FIREBASE_APP_ID`, and
 `FIREBASE_MESSAGING_SENDER_ID` from the generated file. Run the existing workflow
 with the service URL, `execution_mode=synchronous`, and `auth_mode=firebase`.
-Manual dispatch requires this workflow version on the default branch. Merge the
-tested pull request into main before using the manual cloud-build path. Then
-run it through the Actions page or the authenticated Mac CLI:
+Run the workflow from `main` through the Actions page or the authenticated Mac CLI:
 
 ```bash
-gh workflow run android-apk.yml --ref codex/mobile-api-apk \
+gh workflow run android-apk.yml --ref main \
   -f api_base_url=https://YOUR-SERVICE-URL.run.app \
   -f execution_mode=synchronous -f auth_mode=firebase
 ```

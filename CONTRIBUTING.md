@@ -1,8 +1,8 @@
 # Contributing
 
 Start with the [README](README.md) and [architecture](docs/ARCHITECTURE.md).
-Keep changes on a focused branch and submit a pull request to `main`. The active
-mobile and hospital-selection integration branch is `codex/mobile-api-apk`.
+`main` is the shared integration and deployment branch. For future changes,
+create a short-lived feature branch and submit a pull request to `main`.
 
 ## Where changes belong
 

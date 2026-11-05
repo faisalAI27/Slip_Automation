@@ -49,9 +49,9 @@ shared across clients; the new options do not create three separate engines.
 - **Good baseline:** the original 224 Python tests passed before changes.
   The repository has separate application layers, strict models, bounded browser
   actions, safe progress responses, temporary-file cleanup, and an Android CI build.
-- **Branch integration:** the Android/backend, hospital-selection, and legacy-portal
-  work is tracked on the mobile branch and its pull request. CI runs on pushes to
-  that branch, pull requests to main, pushes to main, and manual dispatch.
+- **Branch integration:** `main` is the shared integration and deployment branch.
+  The earlier mobile branch is consolidated through pull request #1. CI runs on
+  pull requests to main, pushes to main, and manual dispatch.
 - **Portal transport:** production permits the exact-host legacy HTTP allowlist.
   Production startup rejects the broader `ALLOW_INSECURE_REPORT_PORTALS=true`.
   Northwest's published HTTPS report host failed certificate validation during
