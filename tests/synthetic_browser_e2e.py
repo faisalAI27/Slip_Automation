@@ -88,6 +88,8 @@ class SyntheticPortal(BrowserSession):
 def run(use_gemini: bool):
     with TemporaryDirectory(prefix="slip-e2e-") as folder:
         settings = replace(get_settings(), temp_dir=Path(folder))
+        if use_gemini and settings.document_ai_provider.strip().lower() != "gemini":
+            raise ValueError("--gemini requires DOCUMENT_AI_PROVIDER=gemini.")
         image = Image.new("RGB", (1500, 900), "white")
         draw = ImageDraw.Draw(image)
         font = ImageFont.load_default(size=40)

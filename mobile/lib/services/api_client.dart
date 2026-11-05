@@ -22,15 +22,21 @@ class ApiClient {
   final http.Client _client;
 
   Future<Uint8List> _send(
-    http.BaseRequest request, {
+    http.BaseRequest Function(Future<void> abortTrigger) buildRequest, {
     required Duration timeout,
     int maxBytes = 1024 * 1024,
   }) async {
+    final abort = Completer<void>();
+    final request = buildRequest(abort.future);
+    StreamIterator<List<int>>? body;
     request.followRedirects = false;
-    return (() async {
+    final operation = (() async {
       final response = await _client.send(request);
+      if (abort.isCompleted) {
+        await response.stream.listen((_) {}).cancel();
+        throw TimeoutException('Request deadline exceeded.');
+      }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        // Cancel the response rather than retaining or displaying error bodies.
         await response.stream.listen((_) {}).cancel();
         throw ApiException(response.statusCode);
       }
@@ -38,15 +44,28 @@ class ApiClient {
         await response.stream.listen((_) {}).cancel();
         throw const FormatException('Response exceeds the size limit.');
       }
+      final iterator = StreamIterator(response.stream);
+      body = iterator;
       final bytes = BytesBuilder(copy: false);
-      await for (final chunk in response.stream.timeout(timeout)) {
+      while (await iterator.moveNext()) {
+        final chunk = iterator.current;
         if (bytes.length + chunk.length > maxBytes) {
           throw const FormatException('Response exceeds the size limit.');
         }
         bytes.add(chunk);
       }
+      body =
+          null; // A fully consumed stream has already closed its subscription.
       return bytes.takeBytes();
-    })().timeout(timeout);
+    })();
+    try {
+      return await operation.timeout(timeout);
+    } finally {
+      // Abort only this request, including a send still waiting for headers.
+      // Cancel the body subscription before callers may start another transfer.
+      abort.complete();
+      await body?.cancel();
+    }
   }
 
   Map<String, dynamic> _json(Uint8List bytes) {
@@ -64,18 +83,25 @@ class ApiClient {
     if (slip.bytes.isEmpty || slip.bytes.length > 12 * 1024 * 1024) {
       throw const ApiException(413);
     }
-    final request = http.MultipartRequest(
-      'POST',
-      baseUri.resolve(synchronous ? 'api/v1/retrieve' : 'api/v1/jobs'),
-    );
-    // Never transmit the original filename, which may contain patient details.
-    request.fields['hospital'] = slip.hospital.name;
-    request.files.add(
-      http.MultipartFile.fromBytes('slip', slip.bytes, filename: 'slip.jpg'),
-    );
     return _json(
       await _send(
-        request,
+        (abortTrigger) {
+          final request = http.AbortableMultipartRequest(
+            'POST',
+            baseUri.resolve(synchronous ? 'api/v1/retrieve' : 'api/v1/jobs'),
+            abortTrigger: abortTrigger,
+          );
+          // Never transmit the original filename, which may contain patient details.
+          request.fields['hospital'] = slip.hospital.name;
+          request.files.add(
+            http.MultipartFile.fromBytes(
+              'slip',
+              slip.bytes,
+              filename: 'slip.jpg',
+            ),
+          );
+          return request;
+        },
         timeout: synchronous
             ? const Duration(minutes: 16)
             : const Duration(seconds: 45),
@@ -85,9 +111,10 @@ class ApiClient {
 
   Future<Map<String, dynamic>> status(String id) async => _json(
     await _send(
-      http.Request(
+      (abortTrigger) => http.AbortableRequest(
         'GET',
         baseUri.resolve('api/v1/jobs/${Uri.encodeComponent(id)}'),
+        abortTrigger: abortTrigger,
       ),
       timeout: const Duration(seconds: 30),
     ),
@@ -98,11 +125,12 @@ class ApiClient {
     String fileId, {
     required bool synchronous,
   }) => _send(
-    http.Request(
+    (abortTrigger) => http.AbortableRequest(
       'GET',
       baseUri.resolve(
         'api/v1/${synchronous ? 'results' : 'jobs'}/${Uri.encodeComponent(id)}/files/${Uri.encodeComponent(fileId)}',
       ),
+      abortTrigger: abortTrigger,
     ),
     timeout: const Duration(seconds: 90),
     maxBytes: 25 * 1024 * 1024,
@@ -110,9 +138,10 @@ class ApiClient {
 
   Future<void> deleteResult(String id) async {
     await _send(
-      http.Request(
+      (abortTrigger) => http.AbortableRequest(
         'DELETE',
         baseUri.resolve('api/v1/results/${Uri.encodeComponent(id)}'),
+        abortTrigger: abortTrigger,
       ),
       timeout: const Duration(seconds: 15),
     );

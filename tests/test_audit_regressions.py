@@ -13,6 +13,20 @@ from tests.test_interaction_safety import _store, _observation, _fill
 
 
 class AuditRegressions(unittest.TestCase):
+    def test_gemini_e2e_flag_rejects_other_configured_providers(self):
+        from dataclasses import replace
+        from config.settings import get_settings
+        from tests.synthetic_browser_e2e import run
+
+        for provider in ("ollama", "openai"):
+            with self.subTest(provider=provider), patch(
+                "tests.synthetic_browser_e2e.get_settings",
+                return_value=replace(get_settings(), document_ai_provider=provider),
+            ), patch("tests.synthetic_browser_e2e.create_document_provider") as factory:
+                with self.assertRaisesRegex(ValueError, "DOCUMENT_AI_PROVIDER=gemini"):
+                    run(use_gemini=True)
+                factory.assert_not_called()
+
     def test_other_hosting_tenant_cannot_receive_credentials(self):
         destination = validate_public_url("https://unrelated.github.io/login", resolve_dns=False)
         with patch("browser_agent.interaction.validate_public_url", return_value=destination):
