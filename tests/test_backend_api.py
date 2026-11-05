@@ -71,9 +71,11 @@ class StaticService:
     def __init__(self, outcome):
         self.outcome = outcome
         self.calls = 0
+        self.hospitals = []
 
-    def retrieve(self, image_path, progress_callback=None):
+    def retrieve(self, image_path, progress_callback=None, *, hospital="other"):
         self.calls += 1
+        self.hospitals.append(hospital)
         if progress_callback:
             progress_callback(
                 ProgressEvent(
@@ -85,12 +87,30 @@ class StaticService:
 
 
 class RaisingService:
-    def retrieve(self, image_path, progress_callback=None):
+    def retrieve(self, image_path, progress_callback=None, *, hospital="other"):
         del image_path, progress_callback
         raise RuntimeError("PATIENT-123 ACCESS-CODE-SECRET")
 
 
 class BackendApiTests(unittest.TestCase):
+    def test_hospital_selection_reaches_background_service(self):
+        for hospital in ("northwest", "rmi", "other"):
+            response = self.client.post(
+                "/api/v1/jobs", data={"hospital": hospital},
+                files={"slip": ("slip.png", _png_bytes(), "image/png")},
+            )
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(self.service.hospitals[-1], hospital)
+
+    def test_invalid_hospital_is_rejected_before_creating_job(self):
+        response = self.client.post(
+            "/api/v1/jobs", data={"hospital": "unknown-hospital"},
+            files={"slip": ("slip.png", _png_bytes(), "image/png")},
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.service.calls, 0)
+        self.assertEqual(list(self.temp_dir.iterdir()), [])
+
     def setUp(self):
         self.directory = TemporaryDirectory()
         self.temp_dir = Path(self.directory.name)

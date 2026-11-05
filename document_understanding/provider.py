@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Protocol
 
 from config.settings import Settings
+from document_understanding.hospitals import Hospital, analysis_prompt
 from document_understanding.models import DocumentUnderstandingResult
 
 
@@ -33,7 +34,9 @@ class DocumentVisionProvider(Protocol):
         ...
 
 
-def create_document_provider(settings: Settings) -> DocumentVisionProvider:
+def create_document_provider(
+    settings: Settings, hospital: Hospital = Hospital.OTHER
+) -> DocumentVisionProvider:
     provider_name = settings.document_ai_provider.strip().lower()
     model_name = settings.document_ai_model.strip()
     if not model_name:
@@ -48,6 +51,7 @@ def create_document_provider(settings: Settings) -> DocumentVisionProvider:
             base_url=settings.ollama_base_url,
             model=model_name,
             timeout_seconds=settings.ollama_timeout_seconds,
+            analysis_prompt=analysis_prompt(hospital),
         )
 
     if provider_name == "openai":
@@ -59,6 +63,7 @@ def create_document_provider(settings: Settings) -> DocumentVisionProvider:
             api_key=settings.document_ai_api_key,
             model=model_name,
             timeout_seconds=settings.document_ai_timeout_seconds,
+            analysis_prompt=analysis_prompt(hospital),
         )
 
     if provider_name == "gemini":
@@ -79,6 +84,7 @@ def create_document_provider(settings: Settings) -> DocumentVisionProvider:
                 settings.gemini_credential_focus_timeout_seconds
             ),
             reasoning_effort=settings.gemini_reasoning_effort,
+            analysis_prompt=analysis_prompt(hospital),
         )
 
     raise ProviderConfigurationError(

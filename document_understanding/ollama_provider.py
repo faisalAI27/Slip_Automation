@@ -31,7 +31,11 @@ SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
 
 class OllamaDocumentVisionProvider:
-    def __init__(self, base_url: str, model: str, timeout_seconds: float) -> None:
+    def __init__(
+        self, base_url: str, model: str, timeout_seconds: float,
+        analysis_prompt: str = DOCUMENT_ANALYSIS_PROMPT,
+    ) -> None:
+        self._analysis_prompt = analysis_prompt
         self._model = model
         self._client = Client(host=base_url, timeout=timeout_seconds)
 
@@ -43,7 +47,7 @@ class OllamaDocumentVisionProvider:
 
         schema = DocumentUnderstandingResult.model_json_schema()
         prompt = (
-            f"{DOCUMENT_ANALYSIS_PROMPT}\n\n"
+            f"{self._analysis_prompt}\n\n"
             "Return one concise JSON object matching the supplied response schema. "
             "Use empty arrays for categories with no visible evidence."
         )

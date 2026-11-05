@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 import 'package:reportapp/config/app_config.dart';
 import 'package:reportapp/models/report_result.dart';
 import 'package:reportapp/models/selected_slip.dart';
+import 'package:reportapp/models/hospital.dart';
 import 'package:reportapp/services/api_client.dart';
 import 'package:reportapp/services/live_report_service.dart';
 import 'package:reportapp/services/report_file_store.dart';
@@ -59,6 +60,29 @@ class MemoryFiles implements ReportFileStore {
 }
 
 void main() {
+  for (final mode in [false, true]) {
+    for (final hospital in Hospital.values) {
+      test(
+        'uploads ${hospital.name} in ${mode ? 'synchronous' : 'background'} mode',
+        () async {
+          final client = ApiClient(
+            config: AppConfig.fromUrl('https://api.example.com/'),
+            client: MockClient((request) async {
+              expect(
+                request.body,
+                contains('name="hospital"\r\n\r\n${hospital.name}'),
+              );
+              expect(request.body, isNot(contains(slip.name)));
+              return http.Response('{}', 200);
+            }),
+          );
+          addTearDown(client.close);
+          await client.upload(slip.forHospital(hospital), synchronous: mode);
+        },
+      );
+    }
+  }
+
   late MemoryFiles files;
   late List<http.Request> requests;
   late List<ReportProgressStage> progress;

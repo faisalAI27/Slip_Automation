@@ -69,6 +69,7 @@ class ApiClient {
       baseUri.resolve(synchronous ? 'api/v1/retrieve' : 'api/v1/jobs'),
     );
     // Never transmit the original filename, which may contain patient details.
+    request.fields['hospital'] = slip.hospital.name;
     request.files.add(
       http.MultipartFile.fromBytes('slip', slip.bytes, filename: 'slip.jpg'),
     );

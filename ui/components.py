@@ -18,7 +18,7 @@ def render_header() -> None:
 
 
 def render_image_preview(image_data: bytes) -> None:
-    st.subheader("2. Check your photo")
+    st.subheader("3. Check your photo")
     st.image(image_data, caption="Preview of your slip photo", width="stretch")
     st.caption("Your photo is kept temporarily and removed when you start over.")
 

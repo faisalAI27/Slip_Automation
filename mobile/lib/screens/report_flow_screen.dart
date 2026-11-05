@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/report_result.dart';
+import '../models/hospital.dart';
 import '../models/selected_slip.dart';
 import '../services/image_selection_service.dart';
 import '../services/report_service.dart';
@@ -31,6 +32,7 @@ class _ReportFlowScreenState extends State<ReportFlowScreen> {
   ReportOutcome? _outcome;
   ReportProgressStage _progress = ReportProgressStage.readingSlip;
   bool _isSelecting = false;
+  Hospital _hospital = Hospital.other;
 
   @override
   void initState() {
@@ -76,7 +78,7 @@ class _ReportFlowScreenState extends State<ReportFlowScreen> {
     });
     try {
       final outcome = await widget.reportService.retrieve(
-        slip,
+        slip.forHospital(_hospital),
         onProgress: (stage) {
           if (mounted) setState(() => _progress = stage);
         },
@@ -124,6 +126,7 @@ class _ReportFlowScreenState extends State<ReportFlowScreen> {
     setState(() {
       _view = _FlowView.selection;
       _selectedSlip = null;
+      _hospital = Hospital.other;
       _outcome = null;
       _progress = ReportProgressStage.readingSlip;
       _isSelecting = false;
@@ -140,6 +143,8 @@ class _ReportFlowScreenState extends State<ReportFlowScreen> {
   Widget build(BuildContext context) {
     return switch (_view) {
       _FlowView.selection => SlipSelectionScreen(
+        hospital: _hospital,
+        onHospitalChanged: (value) => setState(() => _hospital = value),
         selectedSlip: _selectedSlip,
         isSelecting: _isSelecting,
         onTakePhoto: () => _select(SlipImageSource.camera),

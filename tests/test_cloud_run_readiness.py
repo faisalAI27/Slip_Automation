@@ -34,20 +34,40 @@ class StaticService:
     def __init__(self, outcome: ReportRetrievalOutcome) -> None:
         self.outcome = outcome
         self.calls = 0
+        self.hospitals = []
 
-    def retrieve(self, image_path: Path, progress_callback=None):
+    def retrieve(self, image_path: Path, progress_callback=None, *, hospital="other"):
         del image_path, progress_callback
         self.calls += 1
+        self.hospitals.append(hospital)
         return self.outcome
 
 
 class RaisingService:
-    def retrieve(self, image_path: Path, progress_callback=None):
+    def retrieve(self, image_path: Path, progress_callback=None, *, hospital="other"):
         del image_path, progress_callback
         raise RuntimeError("PATIENT-9988 SECRET-CREDENTIAL /private/report/path")
 
 
 class CloudRunSynchronousApiTests(unittest.TestCase):
+    def test_hospital_selection_reaches_synchronous_service(self):
+        for hospital in ("northwest", "rmi", "other"):
+            response = self.client.post(
+                "/api/v1/retrieve", data={"hospital": hospital},
+                files={"slip": ("slip.png", _png_bytes(), "image/png")},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(self.service.hospitals[-1], hospital)
+
+    def test_invalid_hospital_is_rejected_before_creating_result(self):
+        response = self.client.post(
+            "/api/v1/retrieve", data={"hospital": "unknown-hospital"},
+            files={"slip": ("slip.png", _png_bytes(), "image/png")},
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.service.calls, 0)
+        self.assertEqual(list(self.temp_dir.iterdir()), [])
+
     def setUp(self) -> None:
         self.directory = TemporaryDirectory()
         self.temp_dir = Path(self.directory.name)

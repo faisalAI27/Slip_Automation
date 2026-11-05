@@ -6,6 +6,12 @@ from browser_agent.agent import RetrievalAgent
 from browser_agent.models import RetrievalResult, RetrievalStatus, UserProvidedField
 from config.settings import Settings
 from document_understanding.models import AnalysisStatus, DocumentUnderstandingResult
+from document_understanding.hospitals import (
+    Hospital,
+    PROFILES,
+    focused_document,
+    profile_requirement,
+)
 from document_understanding.provider import create_document_provider
 from document_understanding.service import DocumentUnderstandingService
 from services.files import validate_report_path
@@ -19,8 +25,16 @@ from services.models import (
     SAFE_PROGRESS_MESSAGES,
 )
 from utils.logger import get_logger
-from workflow.models import ActionType, PlanningStatus, WorkflowPlan
+from workflow.models import (
+    ActionType,
+    NextAction,
+    PlanningStatus,
+    PortalStrategy,
+    UserInputRequirement,
+    WorkflowPlan,
+)
 from workflow.planner import WorkflowPlanner
+from workflow.validation import validate_plan
 
 
 logger = get_logger(__name__)
@@ -45,15 +59,67 @@ class ReportRetrievalService:
     def from_settings(cls, settings: Settings) -> "ReportRetrievalService":
         return cls(settings=settings)
 
-    def analyze_document(self, image_path: Path) -> DocumentUnderstandingResult:
-        if self._document_service is None:
-            self._document_service = DocumentUnderstandingService(
-                create_document_provider(self._settings)
+    def analyze_document(
+        self, image_path: Path, hospital: Hospital = Hospital.OTHER
+    ) -> DocumentUnderstandingResult:
+        hospital = Hospital(hospital)
+        document_service = self._document_service
+        if document_service is None:
+            document_service = DocumentUnderstandingService(
+                create_document_provider(self._settings, hospital)
             )
-        return self._document_service.analyze(image_path)
+        return focused_document(document_service.analyze(image_path), hospital)
 
-    def plan_workflow(self, document: DocumentUnderstandingResult) -> WorkflowPlan:
-        return self._planner.plan(document)
+    def plan_workflow(
+        self, document: DocumentUnderstandingResult, hospital: Hospital = Hospital.OTHER
+    ) -> WorkflowPlan:
+        hospital = Hospital(hospital)
+        if (
+            hospital == Hospital.OTHER
+            or document.analysis_status != AnalysisStatus.USABLE
+        ):
+            return self._planner.plan(document)
+        document = focused_document(document, hospital)
+        profile = PROFILES[hospital]
+        portal = next(
+            (
+                self._settings.portal_url_overrides[host]
+                for host in profile.override_hosts
+                if host in self._settings.portal_url_overrides
+            ),
+            profile.portal_url,
+        )
+        plan = self._planner.plan_user_provided_url(document, portal)
+        requirement = profile_requirement(document, hospital)
+        if requirement:
+            reason, labels = requirement
+            plan = plan.model_copy(
+                update={
+                    "status": PlanningStatus.USER_INPUT_REQUIRED,
+                    "portal_strategy": PortalStrategy.USER_INPUT_REQUIRED,
+                    "portal_candidates": [],
+                    "required_next_action": NextAction(
+                        type=ActionType.STOP,
+                        reason=reason,
+                        confidence=plan.required_next_action.confidence,
+                    ),
+                    "user_input_requirement": UserInputRequirement(
+                        required=True,
+                        reason=reason,
+                        requested_information=labels,
+                    ),
+                    "planner_summary": reason,
+                    "warnings": [],
+                }
+            )
+        else:
+            plan = plan.model_copy(
+                update={
+                    "warnings": list(document.warnings),
+                    "planner_summary": f"Use the selected {profile.label} report portal and its two report-access fields.",
+                }
+            )
+        return validate_plan(plan, document)
 
     def plan_user_provided_url(
         self, document: DocumentUnderstandingResult, value: str
@@ -81,18 +147,20 @@ class ReportRetrievalService:
         self,
         image_path: Path,
         progress_callback: ProgressCallback | None = None,
+        *,
+        hospital: Hospital = Hospital.OTHER,
     ) -> ReportRetrievalOutcome:
         """Run one complete retrieval and return only safe status and file references."""
         try:
             self._emit(ProgressStage.UPLOADED, progress_callback)
             self._emit(ProgressStage.READING_DOCUMENT, progress_callback)
-            document = self.analyze_document(image_path)
+            document = self.analyze_document(image_path, hospital)
             if document.analysis_status == AnalysisStatus.UNCLEAR:
                 return self._failed("unreadable_document", progress_callback)
 
             self._emit(ProgressStage.DOCUMENT_UNDERSTOOD, progress_callback)
             self._emit(ProgressStage.PLANNING, progress_callback)
-            plan = self.plan_workflow(document)
+            plan = self.plan_workflow(document, hospital)
             if plan.status == PlanningStatus.USER_INPUT_REQUIRED:
                 return self._terminal(
                     RetrievalOutcomeStatus.USER_INPUT_REQUIRED,
